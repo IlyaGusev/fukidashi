@@ -5,7 +5,13 @@ import openai
 import pytest
 
 from fukidashi import detect
-from fukidashi.detect import BadOutput, no_progress, parse_answer, stream_with_optional
+from fukidashi.detect import (
+    PROMPTS,
+    BadOutput,
+    no_progress,
+    parse_answer,
+    stream_with_optional,
+)
 
 
 def bad_request(message: str) -> openai.BadRequestError:
@@ -84,3 +90,31 @@ def test_parse_answer_tolerates_missing_characters() -> None:
 def test_parse_answer_requires_bubbles() -> None:
     with pytest.raises(BadOutput):
         parse_answer('{"characters": []}', 10, 10)
+
+
+def render_prompt(**kwargs: Any) -> str:
+    defaults: dict[str, Any] = {
+        "w": 10,
+        "h": 20,
+        "lang": "English",
+        "context": None,
+        "characters": None,
+    }
+    return PROMPTS.get_template("detect.jinja").render({**defaults, **kwargs})
+
+
+def test_prompt_without_context_has_no_context_sections() -> None:
+    prompt = render_prompt()
+    assert prompt.startswith("This is a page from a manga or comic (10x20 pixels).")
+    assert "previous page" not in prompt
+    assert "Known characters" not in prompt
+    assert prompt.count("\n\n") == 1
+
+
+def test_prompt_lists_context_and_characters() -> None:
+    prompt = render_prompt(context=["こんにちは"], characters={"Aki": "the hero"})
+    assert (
+        "Text from the previous page, for consistent names, terms and tone:\n- こんにちは\n"
+        in prompt
+    )
+    assert "Known characters in this volume so far:\n- Aki: the hero\n" in prompt

@@ -25,6 +25,8 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
 - `src/fukidashi/settings.py`: every setting with its default, via pydantic-settings. Env vars
   are `FUKIDASHI_<FIELD>` plus `NEBIUS_API_TOKEN`; `.env` loads through it, nothing else reads
   the environment.
+- `src/fukidashi/prompts/`: jinja2 templates for the VLM prompts. `detect.jinja` takes `w`,
+  `h`, `lang`, `context` (previous page lines) and `characters` (name to description).
 - `src/fukidashi/detect.py`: VLM detection + translation of text boxes (async, streamed). The
   same call also returns `characters` (name as used in the translation, or a visual label when
   no name is known yet, plus a short description) for the major characters on the page. When a

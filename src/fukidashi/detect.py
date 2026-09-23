@@ -5,34 +5,23 @@ import mimetypes
 import urllib.request
 from collections.abc import Callable
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 import openai
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from openai import AsyncOpenAI
 from PIL import Image, ImageDraw
 
 from fukidashi.settings import settings
 
-PROMPT = """\
-This is a page from a manga or comic ({w}x{h} pixels).
-Find every text container: speech bubbles, thought bubbles, narration boxes and sound effects.
-For each one return its bounding box in pixel coordinates, the text inside it transcribed exactly in the original language, and a natural translation into {lang}.
-Reading order: right-to-left, top-to-bottom for manga; left-to-right for western comics.
-Also list the major characters on this page: anyone who speaks, is named or clearly recurs. Give the name as you write it in the {lang} translation and a short description: role, appearance, way of speaking, relationships. If no name is known yet, use a short visual label as the name (e.g. "Spiky-haired man", "Girl with glasses") and describe the look in enough detail to recognise them later. If a character is already known, reuse the name exactly and return the known description extended with anything new; never drop known details. When a page reveals the real name of a character known only by a label, return the real name and put the old label in "was"; otherwise omit "was".
-{context}
-Answer with JSON only, no prose, in this shape:
-{{"bubbles": [{{"bbox": [x1, y1, x2, y2], "kind": "speech|thought|narration|sfx", "text": "...", "translation": "..."}}], "characters": [{{"name": "...", "description": "...", "was": "old label, only when renamed"}}]}}
-"""  # noqa: E501
-
-CONTEXT = """
-Text from the previous page, for consistent names, terms and tone:
-{lines}
-"""
-
-CHARACTERS = """
-Known characters in this volume so far:
-{lines}
-"""
+PROMPTS = Environment(
+    loader=FileSystemLoader(Path(__file__).parent / "prompts"),
+    trim_blocks=True,
+    lstrip_blocks=True,
+    autoescape=False,
+    undefined=StrictUndefined,
+)
 
 Progress = Callable[[str, int], None]
 
@@ -173,12 +162,12 @@ async def detect_bytes(
     img = Image.open(BytesIO(data))
     w, h = img.size
     url = f"data:{mime};base64,{base64.b64encode(data).decode()}"
-    ctx = CONTEXT.format(lines="\n".join(f"- {t}" for t in context)) if context else ""
-    if characters:
-        ctx += CHARACTERS.format(lines="\n".join(f"- {n}: {d}" for n, d in characters.items()))
+    prompt = PROMPTS.get_template("detect.jinja").render(
+        w=w, h=h, lang=lang, context=context, characters=characters
+    )
     content = [
         {"type": "image_url", "image_url": {"url": url}},
-        {"type": "text", "text": PROMPT.format(w=w, h=h, lang=lang, context=ctx)},
+        {"type": "text", "text": prompt},
     ]
     kwargs: dict[str, Any] = {
         "model": model,
