@@ -181,8 +181,8 @@ const drop = $("drop"), img = $("img"), stage = $("stage"), list = $("list"), ra
       status = $("status"), go = $("go"), cancel = $("cancel"), model = $("model"), lang = $("lang");
 const COLORS = { speech: "var(--speech)", thought: "var(--thought)", narration: "var(--narration)", sfx: "var(--sfx)" };
 const ACTIVE = ["queued", "running"];
-let tab = "page", current = null, result = null, volume = null, concurrency = 1;
-const jobs = new Map();
+let tab = "page", current = null, result = null, volume = null, jobs = [], lastPayload = "", pollTimer = 0, notice = null;
+const stepStates = new Map();
 
 fetch("/models").then(r => r.json()).then(d => {
   for (const m of d.models) model.add(new Option(m, m, false, m === d.default));
@@ -196,12 +196,14 @@ const short = p => p.slice(14);
 const now = () => Date.now() / 1000;
 const secs = s => s < 60 ? `${s.toFixed(s < 10 ? 1 : 0)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
 const kilo = n => n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`;
-const tokens = job => job.steps.reduce((n, s) => n + (s.usage.total_tokens || 0), 0);
 const isActive = job => ACTIVE.includes(job.state);
+const count = (job, state) => job.steps.filter(s => s.state === state).length;
+const tokens = job => job.steps.reduce((n, s) => n + (s.tokens || 0), 0);
+const canRetry = job => !isActive(job) && job.steps.some(s => s.state !== "done");
 
 function setStatus(text, opts = {}) {
   status.className = opts.error ? "error" : "";
-  status.innerHTML = (opts.busy ? '<span class="spinner"></span>' : "") + text;
+  status.innerHTML = (opts.busy ? '<span class="spinner"></span>' : "") + esc(text);
 }
 
 function clear() {
@@ -262,7 +264,7 @@ async function select(p) {
   document.querySelectorAll(".thumb").forEach(t => t.classList.toggle("active", t.dataset.page === p));
   const r = await fetch(`/results/${encodeURIComponent(p)}`);
   if (r.ok && current === p) show(await r.json());
-  renderStatus();
+  renderAll();
 }
 
 async function refreshGallery() {
@@ -271,6 +273,7 @@ async function refreshGallery() {
   g.querySelectorAll(".thumb, .hint").forEach(e => e.remove());
   if (!d.pages.length) g.insertAdjacentHTML("beforeend", '<span class="hint">Saved pages appear here.</span>');
   d.pages.forEach(p => g.appendChild(thumb(p)));
+  renderThumbs();
 }
 
 async function upload(f) {
@@ -289,24 +292,16 @@ $("file").onchange = () => upload($("file").files[0]);
 drop.addEventListener("drop", e => tab === "page" ? upload(e.dataTransfer.files[0]) : addPages(e.dataTransfer.files));
 document.addEventListener("paste", e => { const f = [...e.clipboardData.files][0]; if (f && tab === "page") upload(f); });
 
-async function submit(kind, name) {
-  const r = await fetch("/jobs", { method: "POST", body: form({ kind, name, ...options() }) });
+async function post(url, body) {
+  const r = await fetch(url, { method: "POST", body });
   const d = await r.json();
-  if (d.detail) return setStatus(d.detail, { error: true });
-  jobs.set(d.id, d);
-  renderAll();
+  if (d.detail) notice = d.detail;
+  await poll();
+  return d;
 }
-
-async function cancelJob(id) {
-  await fetch(`/jobs/${id}/cancel`, { method: "POST" });
-}
-
-async function retryJob(id) {
-  const d = await (await fetch(`/jobs/${id}/retry`, { method: "POST" })).json();
-  if (d.detail) setStatus(d.detail, { error: true });
-}
-
-const canRetry = job => !isActive(job) && job.steps.some(s => s.state !== "done");
+const submit = (kind, name) => post("/jobs", form({ kind, name, ...options() }));
+const cancelJob = id => post(`/jobs/${id}/cancel`);
+const retryJob = id => post(`/jobs/${id}/retry`);
 
 go.onclick = () => { if (current) { clear(); submit("page", current); } };
 cancel.onclick = () => { const j = activeJob("page", current); if (j) cancelJob(j.id); };
@@ -400,145 +395,139 @@ function setVolume(v) {
   renderAll();
 }
 
-const events = new EventSource("/events");
-events.onmessage = e => {
-  const ev = JSON.parse(e.data);
-  if (ev.type === "snapshot") {
-    concurrency = ev.concurrency;
-    jobs.clear();
-    ev.jobs.forEach(j => jobs.set(j.id, j));
-  } else if (ev.type === "job") {
-    const prev = jobs.get(ev.job.id);
-    jobs.set(ev.job.id, { ...ev.job, progress: prev?.progress || {} });
-    onJobChange(ev.job, prev);
-  } else if (ev.type === "progress") {
-    const j = jobs.get(ev.id);
-    if (j) (j.progress ||= {})[ev.step] = ev;
-  } else return;
-  renderAll();
-};
-
-function onJobChange(job, prev) {
-  const stepFor = (j, page) => j?.steps.find(s => s.page === page);
-  const step = stepFor(job, current), was = stepFor(prev, current);
-  if (step?.state === "done" && was?.state !== "done") select(current);
-  if (job.kind === "page" && job.name === current && ["failed", "cancelled"].includes(job.state)) clear();
-  if (!isActive(job) && prev && isActive(prev) && tab === "page") refreshGallery();
+async function poll() {
+  try {
+    const text = await (await fetch("/jobs")).text();
+    if (text !== lastPayload) {
+      lastPayload = text;
+      jobs = JSON.parse(text).jobs;
+      onJobs();
+      renderAll();
+    }
+  } catch (err) {
+    notice = `Server unreachable: ${err.message}`;
+    renderStatus();
+  }
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(poll, jobs.some(isActive) ? 1000 : 5000);
 }
 
-const latest = (kind, name) => [...jobs.values()].filter(j => j.kind === kind && j.name === name).sort((a, b) => b.created - a.created)[0];
+function onJobs() {
+  let reload = false, finished = false;
+  for (const j of jobs) j.steps.forEach((s, i) => {
+    const key = `${j.id}:${i}`, was = stepStates.get(key);
+    stepStates.set(key, s.state);
+    if (was === undefined || was === s.state || s.state !== "done") return;
+    finished = true;
+    if (s.page === current) reload = true;
+  });
+  if (reload) select(current);
+  else if (finished) refreshGallery();
+}
+
+const latest = (kind, name) => jobs.find(j => j.kind === kind && j.name === name);
 const activeJob = (kind, name) => { const j = latest(kind, name); return j && isActive(j) ? j : null; };
-const stepOf = (page) => {
-  for (const j of [...jobs.values()].sort((a, b) => b.created - a.created)) {
+function stepOf(page) {
+  for (const j of jobs) {
     const s = j.steps.find(s => s.page === page);
-    if (s && isActive(j)) return { job: j, step: s };
+    if (s) return { job: j, step: s };
   }
   return null;
-};
-
-function queuePosition(job) {
-  return [...jobs.values()].filter(j => j.state === "queued" && j.created <= job.created).length;
 }
 
-function eta(job) {
-  const done = job.steps.filter(s => s.state === "done");
-  if (!done.length) return null;
-  const avg = done.reduce((n, s) => n + s.finished - s.started, 0) / done.length;
-  const running = job.steps.filter(s => s.state === "running");
-  const runningLeft = running.reduce((n, s) => n + Math.max(0, avg - (now() - s.started)), 0);
-  const left = (job.steps.filter(s => s.state === "queued").length * avg + runningLeft) / concurrency;
-  return { avg, left };
-}
-
-function describeStep(job, step, index) {
-  const p = job.progress?.[index];
-  const elapsed = secs(now() - step.started);
-  const attempt = step.attempts > 1 ? ` · attempt ${step.attempts}` : "";
-  if (!p) return `${short(step.page)} · waiting for model${attempt} · ${elapsed}`;
-  return `${short(step.page)} · ${p.phase} · ${kilo(p.chars)} chars${attempt} · ${elapsed}`;
+function describeStep(s) {
+  const progress = s.phase ? `${s.phase} · ${kilo(s.chars)} chars` : "waiting for model";
+  const attempt = s.attempts > 1 ? ` · attempt ${s.attempts}` : "";
+  return `${short(s.page)} · ${progress}${attempt} · ${secs(now() - s.started)}`;
 }
 
 function describe(job) {
-  const total = job.steps.length, done = job.steps.filter(s => s.state === "done").length;
-  const failed = job.steps.filter(s => s.state === "failed").length;
-  const counts = total > 1 ? `${done}/${total} pages` : `${done ? "1 page" : ""}`;
-  if (job.state === "queued") return `queued · position ${queuePosition(job)}`;
-  if (job.state === "running") {
-    const running = job.steps.filter(s => s.state === "running");
-    if (total === 1) return describeStep(job, job.steps[0], 0);
-    const parts = [`${done}/${total}`, `${running.length} running`];
-    if (failed) parts.push(`${failed} failed`);
-    const e = eta(job);
-    if (e) parts.push(`avg ${secs(e.avg)}/page · ~${secs(e.left)} left`);
-    return parts.join(" · ");
+  const total = job.steps.length, failed = count(job, "failed"), parts = [];
+  if (total > 1) parts.push(`${count(job, "done")}/${total} pages`);
+  if (failed) parts.push(`${failed} failed`);
+  if (job.state === "queued") parts.push("queued");
+  else if (job.state === "running") job.steps.filter(s => s.state === "running").forEach(s => parts.push(describeStep(s)));
+  else {
+    if (job.started) parts.push(secs(job.finished - job.started));
+    if (tokens(job)) parts.push(`${kilo(tokens(job))} tokens`);
+    const err = job.steps.find(s => s.error);
+    if (err) parts.push(err.error);
   }
-  const took = job.finished && job.started ? secs(job.finished - job.started) : "";
-  const parts = [job.state, counts, failed ? `${failed} failed` : "", took, tokens(job) ? `${kilo(tokens(job))} tokens` : ""];
-  return parts.filter(Boolean).join(" · ");
+  return parts.join(" · ");
+}
+
+function jobRow(job) {
+  const el = document.createElement("div");
+  el.dataset.id = job.id;
+  el.innerHTML = `<div class="row"><span class="kind">${job.kind}</span><span class="name"></span><span class="state"></span>
+    <button class="x" title="Cancel">×</button><button class="retry" title="Retry unfinished pages">↻</button></div>
+    <div class="bar"><i></i></div><div class="sub"></div>`;
+  const name = el.querySelector(".name");
+  name.textContent = job.kind === "page" ? short(job.name) : job.name;
+  name.title = job.name;
+  el.querySelector(".x").onclick = e => { e.stopPropagation(); cancelJob(job.id); };
+  el.querySelector(".retry").onclick = e => { e.stopPropagation(); retryJob(job.id); };
+  el.onclick = () => {
+    if (job.kind === "volume") { if (tab !== "volume") switchTab("volume"); loadVolume(job.name); }
+    else { if (tab !== "page") switchTab("page"); select(job.name); }
+  };
+  return el;
 }
 
 function renderQueue() {
-  const rows = [...jobs.values()].sort((a, b) => (isActive(b) - isActive(a)) || b.created - a.created).slice(0, 6);
-  $("queue").innerHTML = rows.map(j => {
-    const total = j.steps.length, finished = j.steps.filter(s => s.finished).length;
-    const pct = isActive(j) ? 100 * finished / total : 100;
-    return `<div class="job ${j.state}" data-id="${j.id}">
-      <div class="row"><span class="kind">${j.kind}</span><span class="name" title="${esc(j.name)}">${esc(j.kind === "page" ? short(j.name) : j.name)}</span>
-        <span class="state">${j.state}</span>${isActive(j) ? `<button class="x" title="Cancel">×</button>` : canRetry(j) ? `<button class="retry" title="Retry unfinished pages">↻</button>` : ""}</div>
-      <div class="bar"><i style="width:${pct}%"></i></div>
-      <div class="sub">${esc(j.options.model)} · ${esc(describe(j))}</div>
-    </div>`;
-  }).join("");
-  $("queue").querySelectorAll(".job").forEach(el => {
-    const j = jobs.get(el.dataset.id);
-    el.querySelector(".x")?.addEventListener("click", e => { e.stopPropagation(); cancelJob(j.id); });
-    el.querySelector(".retry")?.addEventListener("click", e => { e.stopPropagation(); retryJob(j.id); });
-    el.onclick = () => j.kind === "volume" ? (tab !== "volume" && switchTab("volume"), loadVolume(j.name)) : (tab !== "page" && switchTab("page"), select(j.name));
+  const q = $("queue");
+  const rows = [...jobs].sort((a, b) => (isActive(b) - isActive(a)) || b.created - a.created).slice(0, 8);
+  const keep = new Set(rows.map(j => j.id));
+  [...q.children].forEach(el => { if (!keep.has(el.dataset.id)) el.remove(); });
+  rows.forEach((job, i) => {
+    const el = q.querySelector(`[data-id="${job.id}"]`) || jobRow(job);
+    if (q.children[i] !== el) q.insertBefore(el, q.children[i] || null);
+    el.className = `job ${job.state}`;
+    el.querySelector(".state").textContent = job.state;
+    el.querySelector(".x").hidden = !isActive(job);
+    el.querySelector(".retry").hidden = !canRetry(job);
+    const finished = job.steps.filter(s => s.finished).length;
+    el.querySelector(".bar i").style.width = `${isActive(job) ? 100 * finished / job.steps.length : 100}%`;
+    el.querySelector(".sub").textContent = `${job.model} · ${describe(job)}`;
   });
 }
 
-function renderVolume() {
-  const job = volume && latest("volume", volume.name);
-  const active = job && isActive(job);
-  $("voltranslate").disabled = !volume || !volume.pages.length;
-  $("volcancel").classList.toggle("hidden", !active);
-  const bar = $("progress");
-  bar.classList.toggle("failed", !!job && job.steps.some(s => s.state === "failed"));
-  bar.firstElementChild.style.width = job ? `${100 * job.steps.filter(s => s.finished).length / job.steps.length}%` : 0;
-  $("volstrip").querySelectorAll(".thumb").forEach(t => {
-    const s = job?.steps.find(s => s.page === t.dataset.page);
-    t.classList.toggle("queued", !!active && s?.state === "queued");
+function renderThumbs() {
+  document.querySelectorAll(".thumb").forEach(t => {
+    const s = stepOf(t.dataset.page)?.step;
+    t.classList.toggle("queued", s?.state === "queued");
     t.classList.toggle("busy", s?.state === "running");
     t.classList.toggle("failed", s?.state === "failed");
   });
 }
 
+function renderVolume() {
+  const job = volume && latest("volume", volume.name);
+  $("voltranslate").disabled = !volume || !volume.pages.length;
+  $("volcancel").classList.toggle("hidden", !(job && isActive(job)));
+  const bar = $("progress");
+  bar.classList.toggle("failed", !!job && count(job, "failed") > 0);
+  bar.firstElementChild.style.width = job ? `${100 * job.steps.filter(s => s.finished).length / job.steps.length}%` : 0;
+}
+
 function renderStatus() {
-  const pageJob = current && activeJob("page", current);
   go.disabled = !current;
-  cancel.classList.toggle("hidden", !pageJob);
+  cancel.classList.toggle("hidden", !(current && activeJob("page", current)));
+  if (notice) return setStatus(notice, { error: true });
   if (tab === "volume") {
     if (!volume) return setStatus("Pick or create a volume.");
     const job = latest("volume", volume.name);
-    if (!job) return setStatus(`${volume.pages.length} pages in ${volume.name}`);
-    if (isActive(job)) return setStatus(describe(job), { busy: true });
-    if (!current || !job.steps.some(s => s.page === current)) {
-      const errors = job.steps.filter(s => s.error).map(s => `${short(s.page)}: ${s.error}`);
-      if (errors.length) raw.textContent = errors.join("\n");
-      return setStatus(describe(job), { error: job.state === "failed" });
-    }
+    if (job && (isActive(job) || !current)) return setStatus(describe(job), { busy: isActive(job), error: job.state === "failed" });
+    if (!current) return setStatus(`${volume.pages.length} pages in ${volume.name}`);
   }
   if (!current) return setStatus("Pick a page to start.");
   const hit = stepOf(current);
-  if (hit) {
-    const { job, step } = hit;
-    const i = job.steps.indexOf(step);
-    if (step.state === "running") return setStatus(describeStep(job, step, i), { busy: true });
-    return setStatus(`${short(current)} · ${describe(job)}`, { busy: true });
+  if (hit && isActive(hit.job)) {
+    if (hit.step.state === "running") return setStatus(describeStep(hit.step), { busy: true });
+    if (hit.step.state === "queued") return setStatus(`${short(current)} · queued`, { busy: true });
   }
-  const last = latest("page", current);
-  if (last && !result && ["failed", "cancelled"].includes(last.state)) {
-    return setStatus(`${short(current)} · ${last.state}${last.steps[0].error ? " · " + last.steps[0].error : ""}`, { error: last.state === "failed" });
+  if (hit && !result && hit.step.state !== "done") {
+    return setStatus(`${short(current)} · ${hit.step.state}${hit.step.error ? " · " + hit.step.error : ""}`, { error: hit.step.state === "failed" });
   }
   if (result) {
     const u = result.usage?.total_tokens;
@@ -547,10 +536,12 @@ function renderStatus() {
   setStatus(`${short(current)} · ready`);
 }
 
-function renderAll() { renderQueue(); renderVolume(); renderStatus(); }
-setInterval(() => { if ([...jobs.values()].some(isActive)) renderAll(); }, 500);
+function renderAll() { renderQueue(); renderThumbs(); renderVolume(); renderStatus(); }
+setInterval(() => { if (jobs.some(isActive)) renderAll(); }, 1000);
 
+document.addEventListener("click", () => { notice = null; }, true);
 refreshGallery();
+poll();
 window.addEventListener("resize", render);
 </script>
 </body>

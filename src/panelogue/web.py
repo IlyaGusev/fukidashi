@@ -1,18 +1,17 @@
 import asyncio
-import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from panelogue import store
 from panelogue.detect import list_vision_models, read_source
-from panelogue.jobs import Job, JobQueue
+from panelogue.jobs import ACTIVE, JobQueue, duplicate_message, job_options
 from panelogue.settings import settings
 
 INDEX = (Path(__file__).parent / "static" / "index.html").read_text()
@@ -57,8 +56,8 @@ def load_volume(name: str) -> dict[str, Any]:
     return vol
 
 
-def find_job(job_id: str) -> Job:
-    job = queue.jobs.get(job_id)
+def find_job(job_id: str) -> dict[str, Any]:
+    job = queue.get(job_id)
     if not job:
         raise HTTPException(404, "unknown job")
     return job
@@ -148,7 +147,7 @@ async def add_pages(name: str, images: list[UploadFile] = File(...)) -> dict[str
 
 @app.get("/jobs")
 async def jobs() -> dict[str, Any]:
-    return {"jobs": [j.to_dict() for j in queue.jobs.values()]}
+    return {"jobs": queue.list_jobs()}
 
 
 @app.post("/jobs")
@@ -172,32 +171,23 @@ async def create_job(
         raise HTTPException(400, "kind must be page or volume")
     options = {"model": model, "thinking": thinking, "lang": lang}
     if duplicate := queue.active_for(kind, name, options):
-        raise HTTPException(409, duplicate.duplicate_message())
-    return queue.submit(kind, name, pages, options).to_dict()
+        raise HTTPException(409, duplicate_message(duplicate))
+    return queue.submit(kind, name, pages, options)
 
 
 @app.post("/jobs/{job_id}/cancel")
 async def cancel_job(job_id: str) -> dict[str, Any]:
-    job = find_job(job_id)
-    queue.cancel(job)
-    return job.to_dict()
+    find_job(job_id)
+    queue.cancel(job_id)
+    return find_job(job_id)
 
 
 @app.post("/jobs/{job_id}/retry")
 async def retry_job(job_id: str) -> dict[str, Any]:
     job = find_job(job_id)
-    if job.active or not job.unfinished_pages:
+    unfinished = any(s["state"] != "done" for s in job["steps"])
+    if job["state"] in ACTIVE or not unfinished:
         raise HTTPException(400, "nothing to retry")
-    if duplicate := queue.active_for(job.kind, job.name, job.options):
-        raise HTTPException(409, duplicate.duplicate_message())
-    return queue.retry(job).to_dict()
-
-
-@app.get("/events")
-async def events() -> StreamingResponse:
-    async def stream() -> AsyncIterator[str]:
-        async for event in queue.subscribe():
-            yield f"data: {json.dumps(event)}\n\n"
-
-    headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-    return StreamingResponse(stream(), media_type="text/event-stream", headers=headers)
+    if duplicate := queue.active_for(job["kind"], job["name"], job_options(job)):
+        raise HTTPException(409, duplicate_message(duplicate))
+    return queue.retry(job)
