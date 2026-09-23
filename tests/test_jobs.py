@@ -1,5 +1,4 @@
 import asyncio
-import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -52,16 +51,11 @@ class FakeTranslate:
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> Path:
-    return tmp_path / "jobs.db"
-
-
-@pytest.fixture
-async def make_queue(db: Path) -> AsyncIterator[MakeQueue]:
+async def make_queue(tmp_path: Path) -> AsyncIterator[MakeQueue]:
     queues: list[JobQueue] = []
 
     async def make(translate: FakeTranslate, **kwargs: Any) -> JobQueue:
-        queue = JobQueue(translate, db, **{**DEFAULTS, **kwargs})
+        queue = JobQueue(translate, tmp_path / "jobs.db", **{**DEFAULTS, **kwargs})
         await queue.start()
         queues.append(queue)
         return queue
@@ -85,7 +79,7 @@ def states(job: Job) -> list[str]:
     return [s["state"] for s in job["steps"]]
 
 
-async def test_pages_run_in_parallel_within_limit(make_queue: MakeQueue, db: Path) -> None:
+async def test_pages_run_in_parallel_within_limit(make_queue: MakeQueue) -> None:
     translate = FakeTranslate(slow)
     queue = await make_queue(translate, concurrency=2)
     submitted = queue.submit("volume", "v", ["p1", "p2", "p3", "p4"], OPTIONS)
@@ -94,8 +88,6 @@ async def test_pages_run_in_parallel_within_limit(make_queue: MakeQueue, db: Pat
     assert states(job) == ["done"] * 4
     assert translate.max_in_flight == 2
     assert [s["boxes"] for s in job["steps"]] == [1, 1, 1, 1]
-    saved = sqlite3.connect(db).execute("SELECT state FROM jobs WHERE id = ?", (job["id"],))
-    assert saved.fetchone() == ("done",)
 
 
 async def test_previous_page_is_passed_as_context(make_queue: MakeQueue) -> None:

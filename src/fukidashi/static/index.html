@@ -320,7 +320,6 @@ async function post(url, body) {
   const d = await r.json();
   if (d.detail) note(d.detail, { error: true });
   await poll();
-  return d;
 }
 const submit = (kind, name) => post("/jobs", form({ kind, name, ...options() }));
 const cancelJob = id => post(`/jobs/${id}/cancel`);
