@@ -38,6 +38,10 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
   queued, so jobs resume after a restart. The UI polls `GET /jobs` (latest 30 jobs, with
   streaming progress on running steps) every second while anything is active.
   `POST /jobs/{id}/retry` resubmits the unfinished pages of a finished job.
+- `src/panelogue/render.py`: typesets a result onto its page. Finds each bubble's white interior around
+  the box, erases the ink with OpenCV inpainting and draws the translation in Comic Neue at the largest
+  size that fits. Skips `sfx`. `store.render_page` caches the PNG under `data/rendered/`;
+  `GET /pages/{name}/rendered` serves it and the Typeset toggle in the UI shows it.
 - `src/panelogue/web.py`: FastAPI routes only.
 - `tests/test_jobs.py`: queue tests with a fake translator. Run `uv run pytest`.
 - `src/panelogue/static/index.html`: the UI.

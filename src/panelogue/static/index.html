@@ -90,6 +90,7 @@
   #stage { position: relative; display: none; max-width: 900px; border-radius: var(--radius); overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
   #stage img { display: block; max-width: 100%; }
   .box { position: absolute; border: 2px solid var(--c); border-radius: 3px; cursor: pointer; transition: background .1s; }
+  #stage.typeset .box { display: none; }
   .box:hover, .box.active { background: color-mix(in srgb, var(--c) 28%, transparent); }
   .box i {
     position: absolute; top: -1px; left: -1px; background: var(--c); color: #111;
@@ -145,6 +146,7 @@
   <div class="field"><label for="model">Model</label><select id="model"></select></div>
   <div class="field"><label for="lang">Translate to</label><input type="text" id="lang" value="English"></div>
   <label class="toggle"><input type="checkbox" id="thinking"><span>Thinking</span></label>
+  <label class="toggle"><input type="checkbox" id="typeset"><span>Typeset</span></label>
   <button id="go" disabled>Translate page</button>
   <button id="cancel" class="hidden">Cancel</button>
 </header>
@@ -178,7 +180,8 @@
 <script>
 const $ = id => document.getElementById(id);
 const drop = $("drop"), img = $("img"), stage = $("stage"), list = $("list"), raw = $("raw"),
-      status = $("status"), go = $("go"), cancel = $("cancel"), model = $("model"), lang = $("lang");
+      status = $("status"), go = $("go"), cancel = $("cancel"), model = $("model"), lang = $("lang"),
+      typeset = $("typeset");
 const COLORS = { speech: "var(--speech)", thought: "var(--thought)", narration: "var(--narration)", sfx: "var(--sfx)" };
 const ACTIVE = ["queued", "running"];
 let tab = "page", current = null, result = null, volume = null, jobs = [], lastPayload = "", pollTimer = 0, notice = null;
@@ -193,6 +196,8 @@ const esc = s => (s || "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", 
 const options = () => ({ model: model.value, thinking: $("thinking").checked, lang: lang.value });
 const form = obj => { const fd = new FormData(); for (const [k, v] of Object.entries(obj)) fd.append(k, v); return fd; };
 const short = p => p.slice(14);
+const pageSrc = p => `/pages/files/${encodeURIComponent(p)}`;
+const renderedSrc = p => `/pages/${encodeURIComponent(p)}/rendered`;
 const now = () => Date.now() / 1000;
 const secs = s => s < 60 ? `${s.toFixed(s < 10 ? 1 : 0)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
 const kilo = n => n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`;
@@ -242,22 +247,31 @@ function show(d) {
       <div class="tr">${esc(b.translation)}</div>
     </li>`).join("");
   raw.textContent = JSON.stringify(d, null, 2);
-  if (img.complete) render(); else img.onload = render;
+  refreshImage();
 }
+
+function refreshImage() {
+  const on = typeset.checked && result;
+  stage.classList.toggle("typeset", on);
+  const src = on ? renderedSrc(current) : pageSrc(current);
+  if (img.getAttribute("src") === src) render(); else img.src = src;
+}
+typeset.onchange = refreshImage;
+img.onload = render;
 
 function thumb(p) {
   const t = document.createElement("div");
   t.className = "thumb" + (p.name === current ? " active" : "") + (p.cached ? " cached" : "");
   t.title = short(p.name);
   t.dataset.page = p.name;
-  t.style.backgroundImage = `url(/pages/files/${encodeURIComponent(p.name)})`;
+  t.style.backgroundImage = `url(${pageSrc(p.name)})`;
   t.onclick = () => select(p.name);
   return t;
 }
 
 async function select(p) {
   current = p;
-  img.src = `/pages/files/${encodeURIComponent(p)}`;
+  refreshImage();
   drop.style.display = "none";
   stage.style.display = "block";
   clear();
