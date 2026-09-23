@@ -127,6 +127,20 @@ async def stream_completion(
     return "".join(parts), usage
 
 
+async def stream_with_optional(
+    kwargs: dict[str, Any], optional: dict[str, Any], on_progress: Progress
+) -> tuple[str, dict[str, Any]]:
+    while True:
+        try:
+            return await stream_completion({**kwargs, **optional}, on_progress)
+        except openai.BadRequestError as e:
+            if not optional:
+                raise
+            rejected = [k for k in optional if k in str(e)] or list(optional)
+            for k in rejected:
+                del optional[k]
+
+
 async def detect_bytes(
     data: bytes,
     mime: str,
@@ -151,12 +165,10 @@ async def detect_bytes(
         "extra_body": {"chat_template_kwargs": {"enable_thinking": thinking}},
         "messages": [{"role": "user", "content": content}],
     }
-    try:
-        text, usage = await stream_completion(
-            {**kwargs, "response_format": {"type": "json_object"}}, on_progress
-        )
-    except openai.BadRequestError:
-        text, usage = await stream_completion(kwargs, on_progress)
+    optional: dict[str, Any] = {"response_format": {"type": "json_object"}}
+    if not thinking:
+        optional["reasoning_effort"] = "none"
+    text, usage = await stream_with_optional(kwargs, optional, on_progress)
     return img, {
         "bubbles": parse_bubbles(text, w, h),
         "size": [w, h],
