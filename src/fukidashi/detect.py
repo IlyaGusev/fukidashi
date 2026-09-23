@@ -11,7 +11,7 @@ import openai
 from openai import AsyncOpenAI
 from PIL import Image, ImageDraw
 
-from panelogue.settings import settings
+from fukidashi.settings import settings
 
 PROMPT = """\
 This is a page from a manga or comic ({w}x{h} pixels).
@@ -145,6 +145,8 @@ async def detect_bytes(
     lang: str = settings.lang,
     context: list[str] | None = None,
     on_progress: Progress = no_progress,
+    effort: str | None = None,
+    max_tokens: int = settings.max_tokens,
 ) -> tuple[Image.Image, dict[str, Any]]:
     img = Image.open(BytesIO(data))
     w, h = img.size
@@ -157,19 +159,22 @@ async def detect_bytes(
     kwargs: dict[str, Any] = {
         "model": model,
         "temperature": 0,
-        "max_tokens": settings.max_tokens,
+        "max_tokens": max_tokens,
         "extra_body": {"chat_template_kwargs": {"thinking": thinking, "enable_thinking": thinking}},
         "messages": [{"role": "user", "content": content}],
     }
     optional: dict[str, Any] = {"response_format": {"type": "json_object"}}
     if not thinking:
         optional["reasoning_effort"] = "none"
+    elif effort:
+        optional["reasoning_effort"] = effort
     text, usage = await stream_with_optional(kwargs, optional, on_progress)
     return img, {
         "bubbles": parse_bubbles(text, w, h),
         "size": [w, h],
         "model": model,
         "thinking": thinking,
+        "effort": effort,
         "lang": lang,
         "usage": usage,
     }
