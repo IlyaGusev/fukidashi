@@ -1,9 +1,6 @@
 import asyncio
-import hashlib
 import json
-import mimetypes
 import os
-import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,15 +12,18 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
+from panelogue import store
 from panelogue.detect import LANG, MODEL, list_vision_models, read_source
-from panelogue.jobs import PAGES, RESULTS, JobQueue
+from panelogue.jobs import Job, JobQueue
 
 load_dotenv()
 INDEX = (Path(__file__).parent / "static" / "index.html").read_text()
-VOLUMES = Path("data/volumes")
-for d in (PAGES, RESULTS, VOLUMES):
-    d.mkdir(parents=True, exist_ok=True)
-queue = JobQueue(workers=int(os.environ.get("PANELOGUE_WORKERS", "2")))
+store.ensure_dirs()
+queue = JobQueue(
+    concurrency=int(os.environ.get("PANELOGUE_WORKERS", "2")),
+    attempts=int(os.environ.get("PANELOGUE_ATTEMPTS", "3")),
+    step_timeout=float(os.environ.get("PANELOGUE_STEP_TIMEOUT", "600")),
+)
 
 
 @asynccontextmanager
@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(lifespan=lifespan)
-app.mount("/pages/files", StaticFiles(directory=PAGES), name="pages")
+app.mount("/pages/files", StaticFiles(directory=store.PAGES), name="pages")
 SAMPLE_URL = "https://raw.githubusercontent.com/mantra-inc/open-mantra-dataset/main/images/{book}/ja/{page:03d}.jpg"
 SAMPLES = {
     "tojime_no_siora": 46,
@@ -45,41 +45,25 @@ SAMPLES = {
 }
 
 
-def safe(name: str) -> str:
-    return re.sub(r"[^\w.-]+", "_", name.strip())[:60] or "untitled"
-
-
-def save_page(data: bytes, filename: str | None, content_type: str | None) -> str:
-    ext = Path(filename or "").suffix or mimetypes.guess_extension(content_type or "") or ".png"
-    name = f"{hashlib.sha1(data).hexdigest()[:12]}__{safe(Path(filename or 'page').stem)}{ext}"
-    path = PAGES / name
-    if not path.exists():
-        path.write_bytes(data)
-    return name
-
-
 def page_name(page: str) -> str:
     name = Path(page).name
-    if not (PAGES / name).is_file():
+    if not store.page_exists(name):
         raise HTTPException(404, "unknown page")
     return name
 
 
-def page_info(name: str) -> dict[str, Any]:
-    return {"name": name, "cached": (RESULTS / f"{name}.json").exists()}
-
-
 def load_volume(name: str) -> dict[str, Any]:
-    path = VOLUMES / f"{safe(name)}.json"
-    if not path.is_file():
+    vol = store.load_volume(name)
+    if vol is None:
         raise HTTPException(404, "unknown volume")
-    vol: dict[str, Any] = json.loads(path.read_text())
-    vol["pages"] = [page_info(p) for p in vol["pages"]]
     return vol
 
 
-def save_volume(name: str, pages: list[str]) -> None:
-    (VOLUMES / f"{safe(name)}.json").write_text(json.dumps({"name": name, "pages": pages}))
+def find_job(job_id: str) -> Job:
+    job = queue.jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "unknown job")
+    return job
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -94,27 +78,25 @@ async def models() -> dict[str, Any]:
 
 @app.get("/pages")
 async def pages() -> dict[str, Any]:
-    files = sorted(PAGES.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
-    return {"pages": [page_info(p.name) for p in files]}
+    return {"pages": store.list_pages()}
 
 
 @app.post("/pages")
 async def upload(image: UploadFile = File(...)) -> dict[str, str]:
-    return {"page": save_page(await image.read(), image.filename, image.content_type)}
+    return {"page": store.save_page(await image.read(), image.filename, image.content_type)}
 
 
 @app.get("/results/{page}")
 async def result(page: str) -> JSONResponse:
-    path = RESULTS / f"{Path(page).name}.json"
-    if not path.is_file():
+    found = store.load_result(Path(page).name)
+    if found is None:
         raise HTTPException(404, "no cached result")
-    return JSONResponse(json.loads(path.read_text()))
+    return JSONResponse(found)
 
 
 @app.get("/volumes")
 async def volumes() -> dict[str, Any]:
-    names = sorted(json.loads(p.read_text())["name"] for p in VOLUMES.glob("*.json"))
-    return {"volumes": names}
+    return {"volumes": store.list_volumes()}
 
 
 @app.post("/volumes")
@@ -122,8 +104,8 @@ async def create_volume(name: str = Form(...)) -> dict[str, Any]:
     name = name.strip()
     if not name:
         raise HTTPException(400, "empty name")
-    if not (VOLUMES / f"{safe(name)}.json").exists():
-        save_volume(name, [])
+    if not store.volume_path(name).exists():
+        store.save_volume(name, [])
     return load_volume(name)
 
 
@@ -142,13 +124,14 @@ async def import_sample(book: str) -> dict[str, Any]:
     if book not in SAMPLES:
         raise HTTPException(404, "unknown sample")
     name = f"OpenMantra {book}"
-    if not (VOLUMES / f"{safe(name)}.json").exists():
+    if not store.volume_path(name).exists():
         urls = [SAMPLE_URL.format(book=book, page=i) for i in range(SAMPLES[book])]
         downloads = await asyncio.gather(*(run_in_threadpool(read_source, u) for u in urls))
         pages = [
-            save_page(data, f"{book}_{i:03d}.jpg", mime) for i, (data, mime) in enumerate(downloads)
+            store.save_page(data, f"{book}_{i:03d}.jpg", mime)
+            for i, (data, mime) in enumerate(downloads)
         ]
-        save_volume(name, pages)
+        store.save_volume(name, pages)
     return load_volume(name)
 
 
@@ -158,10 +141,10 @@ async def add_pages(name: str, images: list[UploadFile] = File(...)) -> dict[str
     existing = [p["name"] for p in vol["pages"]]
     uploads = sorted(images, key=lambda f: f.filename or "")
     for f in uploads:
-        page = save_page(await f.read(), f.filename, f.content_type)
+        page = store.save_page(await f.read(), f.filename, f.content_type)
         if page not in existing:
             existing.append(page)
-    save_volume(name, existing)
+    store.save_volume(name, existing)
     return load_volume(name)
 
 
@@ -197,11 +180,19 @@ async def create_job(
 
 @app.post("/jobs/{job_id}/cancel")
 async def cancel_job(job_id: str) -> dict[str, Any]:
-    job = queue.jobs.get(job_id)
-    if not job:
-        raise HTTPException(404, "unknown job")
+    job = find_job(job_id)
     queue.cancel(job)
     return job.to_dict()
+
+
+@app.post("/jobs/{job_id}/retry")
+async def retry_job(job_id: str) -> dict[str, Any]:
+    job = find_job(job_id)
+    if job.active or not job.unfinished_pages:
+        raise HTTPException(400, "nothing to retry")
+    if queue.active_for(job.kind, job.name):
+        raise HTTPException(409, "already queued")
+    return queue.retry(job).to_dict()
 
 
 @app.get("/events")

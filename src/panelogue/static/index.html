@@ -114,12 +114,13 @@
   .job .state { color: var(--muted); }
   .job.running .state { color: var(--sfx); }
   .job.done .state { color: var(--ok); }
-  .job.failed .state, .job.interrupted .state { color: var(--accent); }
-  .job .x { background: transparent; color: var(--muted); padding: 0 4px; font-size: 16px; line-height: 1; align-self: center; }
+  .job.failed .state { color: var(--accent); }
+  .job .x, .job .retry { background: transparent; color: var(--muted); padding: 0 4px; font-size: 16px; line-height: 1; align-self: center; }
   .job .x:hover { color: var(--accent); }
+  .job .retry:hover { color: var(--ok); }
   .job .bar { height: 4px; background: var(--panel-2); border-radius: 2px; overflow: hidden; margin: 6px 0 4px; }
   .job .bar i { display: block; height: 100%; background: var(--ok); transition: width .3s; }
-  .job.failed .bar i, .job.cancelled .bar i, .job.interrupted .bar i { background: var(--muted); }
+  .job.failed .bar i, .job.cancelled .bar i { background: var(--muted); }
   .job .sub { color: var(--muted); }
   #list { flex: 1; overflow: auto; padding: 12px; margin: 0; list-style: none; }
   #list li { background: var(--panel-2); border-left: 3px solid var(--c); border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; cursor: pointer; transition: background .1s; }
@@ -180,7 +181,7 @@ const drop = $("drop"), img = $("img"), stage = $("stage"), list = $("list"), ra
       status = $("status"), go = $("go"), cancel = $("cancel"), model = $("model"), lang = $("lang");
 const COLORS = { speech: "var(--speech)", thought: "var(--thought)", narration: "var(--narration)", sfx: "var(--sfx)" };
 const ACTIVE = ["queued", "running"];
-let tab = "page", current = null, result = null, volume = null;
+let tab = "page", current = null, result = null, volume = null, concurrency = 1;
 const jobs = new Map();
 
 fetch("/models").then(r => r.json()).then(d => {
@@ -300,6 +301,13 @@ async function cancelJob(id) {
   await fetch(`/jobs/${id}/cancel`, { method: "POST" });
 }
 
+async function retryJob(id) {
+  const d = await (await fetch(`/jobs/${id}/retry`, { method: "POST" })).json();
+  if (d.detail) setStatus(d.detail, { error: true });
+}
+
+const canRetry = job => !isActive(job) && job.steps.some(s => s.state !== "done");
+
 go.onclick = () => { if (current) { clear(); submit("page", current); } };
 cancel.onclick = () => { const j = activeJob("page", current); if (j) cancelJob(j.id); };
 
@@ -396,15 +404,16 @@ const events = new EventSource("/events");
 events.onmessage = e => {
   const ev = JSON.parse(e.data);
   if (ev.type === "snapshot") {
+    concurrency = ev.concurrency;
     jobs.clear();
     ev.jobs.forEach(j => jobs.set(j.id, j));
   } else if (ev.type === "job") {
     const prev = jobs.get(ev.job.id);
-    jobs.set(ev.job.id, { ...ev.job, progress: prev?.progress });
+    jobs.set(ev.job.id, { ...ev.job, progress: prev?.progress || {} });
     onJobChange(ev.job, prev);
   } else if (ev.type === "progress") {
     const j = jobs.get(ev.id);
-    if (j) j.progress = { ...ev, at: now() };
+    if (j) (j.progress ||= {})[ev.step] = ev;
   } else return;
   renderAll();
 };
@@ -435,16 +444,18 @@ function eta(job) {
   const done = job.steps.filter(s => s.state === "done");
   if (!done.length) return null;
   const avg = done.reduce((n, s) => n + s.finished - s.started, 0) / done.length;
-  const running = job.steps.find(s => s.state === "running");
-  const left = job.steps.filter(s => s.state === "queued").length * avg + (running ? Math.max(0, avg - (now() - running.started)) : 0);
+  const running = job.steps.filter(s => s.state === "running");
+  const runningLeft = running.reduce((n, s) => n + Math.max(0, avg - (now() - s.started)), 0);
+  const left = (job.steps.filter(s => s.state === "queued").length * avg + runningLeft) / concurrency;
   return { avg, left };
 }
 
 function describeStep(job, step, index) {
-  const p = job.progress?.step === index ? job.progress : null;
+  const p = job.progress?.[index];
   const elapsed = secs(now() - step.started);
-  if (!p) return `${short(step.page)} · waiting for model · ${elapsed}`;
-  return `${short(step.page)} · ${p.phase} · ${kilo(p.chars)} chars · ${elapsed}`;
+  const attempt = step.attempts > 1 ? ` · attempt ${step.attempts}` : "";
+  if (!p) return `${short(step.page)} · waiting for model${attempt} · ${elapsed}`;
+  return `${short(step.page)} · ${p.phase} · ${kilo(p.chars)} chars${attempt} · ${elapsed}`;
 }
 
 function describe(job) {
@@ -453,12 +464,12 @@ function describe(job) {
   const counts = total > 1 ? `${done}/${total} pages` : `${done ? "1 page" : ""}`;
   if (job.state === "queued") return `queued · position ${queuePosition(job)}`;
   if (job.state === "running") {
-    const i = job.steps.findIndex(s => s.state === "running");
-    const parts = [];
-    if (total > 1) parts.push(`${done}/${total}`);
-    if (i >= 0) parts.push(describeStep(job, job.steps[i], i));
+    const running = job.steps.filter(s => s.state === "running");
+    if (total === 1) return describeStep(job, job.steps[0], 0);
+    const parts = [`${done}/${total}`, `${running.length} running`];
+    if (failed) parts.push(`${failed} failed`);
     const e = eta(job);
-    if (e && total > 1) parts.push(`avg ${secs(e.avg)}/page · ~${secs(e.left)} left`);
+    if (e) parts.push(`avg ${secs(e.avg)}/page · ~${secs(e.left)} left`);
     return parts.join(" · ");
   }
   const took = job.finished && job.started ? secs(job.finished - job.started) : "";
@@ -473,7 +484,7 @@ function renderQueue() {
     const pct = isActive(j) ? 100 * finished / total : 100;
     return `<div class="job ${j.state}" data-id="${j.id}">
       <div class="row"><span class="kind">${j.kind}</span><span class="name" title="${esc(j.name)}">${esc(j.kind === "page" ? short(j.name) : j.name)}</span>
-        <span class="state">${j.state}</span>${isActive(j) ? `<button class="x" title="Cancel">×</button>` : ""}</div>
+        <span class="state">${j.state}</span>${isActive(j) ? `<button class="x" title="Cancel">×</button>` : canRetry(j) ? `<button class="retry" title="Retry unfinished pages">↻</button>` : ""}</div>
       <div class="bar"><i style="width:${pct}%"></i></div>
       <div class="sub">${esc(describe(j))}</div>
     </div>`;
@@ -481,6 +492,7 @@ function renderQueue() {
   $("queue").querySelectorAll(".job").forEach(el => {
     const j = jobs.get(el.dataset.id);
     el.querySelector(".x")?.addEventListener("click", e => { e.stopPropagation(); cancelJob(j.id); });
+    el.querySelector(".retry")?.addEventListener("click", e => { e.stopPropagation(); retryJob(j.id); });
     el.onclick = () => j.kind === "volume" ? (tab !== "volume" && switchTab("volume"), loadVolume(j.name)) : (tab !== "page" && switchTab("page"), select(j.name));
   });
 }
@@ -526,7 +538,7 @@ function renderStatus() {
     return setStatus(`${short(current)} · ${describe(job)}`, { busy: true });
   }
   const last = latest("page", current);
-  if (last && !result && ["failed", "cancelled", "interrupted"].includes(last.state)) {
+  if (last && !result && ["failed", "cancelled"].includes(last.state)) {
     return setStatus(`${short(current)} · ${last.state}${last.steps[0].error ? " · " + last.steps[0].error : ""}`, { error: last.state === "failed" });
   }
   if (result) {

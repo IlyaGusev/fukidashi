@@ -1,4 +1,5 @@
 import base64
+import functools
 import json
 import mimetypes
 import os
@@ -23,7 +24,7 @@ Reading order: right-to-left, top-to-bottom for manga; left-to-right for western
 {context}
 Answer with JSON only, no prose, in this shape:
 {{"bubbles": [{{"bbox": [x1, y1, x2, y2], "kind": "speech|thought|narration|sfx", "text": "...", "translation": "..."}}]}}
-"""
+"""  # noqa: E501
 
 CONTEXT = """
 Text from the previous page, for consistent names, terms and tone:
@@ -33,12 +34,23 @@ Text from the previous page, for consistent names, terms and tone:
 Progress = Callable[[str, int], None]
 
 
+class BadOutput(ValueError):
+    pass
+
+
 def no_progress(phase: str, chars: int) -> None:
     pass
 
 
+@functools.cache
 def client() -> AsyncOpenAI:
-    return AsyncOpenAI(base_url=BASE_URL, api_key=os.environ["NEBIUS_API_TOKEN"])
+    stall = float(os.environ.get("PANELOGUE_STALL_TIMEOUT", "60"))
+    return AsyncOpenAI(
+        base_url=BASE_URL,
+        api_key=os.environ["NEBIUS_API_TOKEN"],
+        timeout=openai.Timeout(connect=10, read=stall, write=30, pool=10),
+        max_retries=0,
+    )
 
 
 async def list_vision_models() -> list[str]:
@@ -56,12 +68,39 @@ def read_source(src: str) -> tuple[bytes, str]:
         return f.read(), mimetypes.guess_type(src)[0] or "image/png"
 
 
-def parse_json(text: str) -> dict[str, Any]:
+def strip_fence(text: str) -> str:
     text = text.strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[1].rsplit("```", 1)[0]
-    result: dict[str, Any] = json.loads(text)
-    return result
+    return text
+
+
+def clamp(value: int, limit: int) -> int:
+    return max(0, min(limit, value))
+
+
+def clean_bubble(raw: Any, w: int, h: int) -> dict[str, Any]:
+    try:
+        x1, y1, x2, y2 = (int(v) for v in raw["bbox"])
+        return {
+            "bbox": [clamp(x1, w), clamp(y1, h), clamp(x2, w), clamp(y2, h)],
+            "kind": str(raw.get("kind") or "speech"),
+            "text": str(raw.get("text") or ""),
+            "translation": str(raw.get("translation") or ""),
+        }
+    except (KeyError, TypeError, ValueError) as e:
+        raise BadOutput(f"malformed bubble: {str(raw)[:120]}") from e
+
+
+def parse_bubbles(text: str, w: int, h: int) -> list[dict[str, Any]]:
+    try:
+        data = json.loads(strip_fence(text))
+    except json.JSONDecodeError as e:
+        raise BadOutput(f"invalid JSON after {len(text)} chars: {e}") from e
+    bubbles = data.get("bubbles") if isinstance(data, dict) else None
+    if not isinstance(bubbles, list):
+        raise BadOutput("answer has no bubbles list")
+    return [clean_bubble(b, w, h) for b in bubbles]
 
 
 async def stream_completion(
@@ -118,17 +157,14 @@ async def detect_bytes(
         )
     except openai.BadRequestError:
         text, usage = await stream_completion(kwargs, on_progress)
-    result = parse_json(text)
-    for b in result["bubbles"]:
-        x1, y1, x2, y2 = b["bbox"]
-        b["bbox"] = [max(0, min(w, x1)), max(0, min(h, y1)), max(0, min(w, x2)), max(0, min(h, y2))]
-        b.setdefault("translation", "")
-    result["size"] = [w, h]
-    result["model"] = model
-    result["thinking"] = thinking
-    result["lang"] = lang
-    result["usage"] = usage
-    return img, result
+    return img, {
+        "bubbles": parse_bubbles(text, w, h),
+        "size": [w, h],
+        "model": model,
+        "thinking": thinking,
+        "lang": lang,
+        "usage": usage,
+    }
 
 
 async def detect(
