@@ -18,13 +18,19 @@ This is a page from a manga or comic ({w}x{h} pixels).
 Find every text container: speech bubbles, thought bubbles, narration boxes and sound effects.
 For each one return its bounding box in pixel coordinates, the text inside it transcribed exactly in the original language, and a natural translation into {lang}.
 Reading order: right-to-left, top-to-bottom for manga; left-to-right for western comics.
+Also list the major characters on this page: anyone who speaks, is named or clearly recurs. Give the name as you write it in the {lang} translation and a short description: role, appearance, way of speaking, relationships. If no name is known yet, use a short visual label as the name (e.g. "Spiky-haired man", "Girl with glasses") and describe the look in enough detail to recognise them later. If a character is already known, reuse the name exactly and return the known description extended with anything new; never drop known details. When a page reveals the real name of a character known only by a label, return the real name and put the old label in "was"; otherwise omit "was".
 {context}
 Answer with JSON only, no prose, in this shape:
-{{"bubbles": [{{"bbox": [x1, y1, x2, y2], "kind": "speech|thought|narration|sfx", "text": "...", "translation": "..."}}]}}
+{{"bubbles": [{{"bbox": [x1, y1, x2, y2], "kind": "speech|thought|narration|sfx", "text": "...", "translation": "..."}}], "characters": [{{"name": "...", "description": "...", "was": "old label, only when renamed"}}]}}
 """  # noqa: E501
 
 CONTEXT = """
 Text from the previous page, for consistent names, terms and tone:
+{lines}
+"""
+
+CHARACTERS = """
+Known characters in this volume so far:
 {lines}
 """
 
@@ -88,7 +94,16 @@ def clean_bubble(raw: Any, w: int, h: int) -> dict[str, Any]:
         raise BadOutput(f"malformed bubble: {str(raw)[:120]}") from e
 
 
-def parse_bubbles(text: str, w: int, h: int) -> list[dict[str, Any]]:
+def clean_character(raw: Any) -> dict[str, str] | None:
+    if not isinstance(raw, dict) or not str(raw.get("name") or "").strip():
+        return None
+    character = {"name": str(raw["name"]).strip(), "description": str(raw.get("description") or "")}
+    if (was := str(raw.get("was") or "").strip()) and was != character["name"]:
+        character["was"] = was
+    return character
+
+
+def parse_answer(text: str, w: int, h: int) -> dict[str, Any]:
     try:
         data = json.loads(strip_fence(text))
     except json.JSONDecodeError as e:
@@ -96,7 +111,13 @@ def parse_bubbles(text: str, w: int, h: int) -> list[dict[str, Any]]:
     bubbles = data.get("bubbles") if isinstance(data, dict) else None
     if not isinstance(bubbles, list):
         raise BadOutput("answer has no bubbles list")
-    return [clean_bubble(b, w, h) for b in bubbles]
+    characters = data.get("characters")
+    if not isinstance(characters, list):
+        characters = []
+    return {
+        "bubbles": [clean_bubble(b, w, h) for b in bubbles],
+        "characters": [c for c in map(clean_character, characters) if c],
+    }
 
 
 async def stream_completion(
@@ -144,12 +165,15 @@ async def detect_bytes(
     thinking: bool = False,
     lang: str = settings.lang,
     context: list[str] | None = None,
+    characters: dict[str, str] | None = None,
     on_progress: Progress = no_progress,
 ) -> tuple[Image.Image, dict[str, Any]]:
     img = Image.open(BytesIO(data))
     w, h = img.size
     url = f"data:{mime};base64,{base64.b64encode(data).decode()}"
     ctx = CONTEXT.format(lines="\n".join(f"- {t}" for t in context)) if context else ""
+    if characters:
+        ctx += CHARACTERS.format(lines="\n".join(f"- {n}: {d}" for n, d in characters.items()))
     content = [
         {"type": "image_url", "image_url": {"url": url}},
         {"type": "text", "text": PROMPT.format(w=w, h=h, lang=lang, context=ctx)},
@@ -166,7 +190,7 @@ async def detect_bytes(
         optional["reasoning_effort"] = "none"
     text, usage = await stream_with_optional(kwargs, optional, on_progress)
     return img, {
-        "bubbles": parse_bubbles(text, w, h),
+        **parse_answer(text, w, h),
         "size": [w, h],
         "model": model,
         "thinking": thinking,

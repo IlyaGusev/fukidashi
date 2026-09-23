@@ -122,6 +122,13 @@ async def volume(name: str) -> dict[str, Any]:
     return load_volume(name)
 
 
+@app.get("/volumes/{name}/characters")
+async def volume_characters(name: str) -> dict[str, Any]:
+    vol = load_volume(name)
+    characters = store.volume_characters(vol["name"])
+    return {"characters": [{"name": n, "description": d} for n, d in characters.items()]}
+
+
 @app.get("/samples")
 async def samples() -> dict[str, Any]:
     return {"samples": list(SAMPLES)}

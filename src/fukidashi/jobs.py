@@ -22,7 +22,9 @@ RETRYABLE = (
     openai.InternalServerError,
 )
 
-Translate = Callable[[str, dict[str, Any], str | None, Progress], Awaitable[dict[str, Any]]]
+Translate = Callable[
+    [str, dict[str, Any], str | None, str | None, Progress], Awaitable[dict[str, Any]]
+]
 
 
 @dataclass
@@ -52,6 +54,10 @@ class Job:
     @property
     def active(self) -> bool:
         return self.state in ACTIVE
+
+    @property
+    def volume(self) -> str | None:
+        return self.name if self.kind == "volume" else None
 
     @property
     def unfinished_pages(self) -> list[str]:
@@ -191,7 +197,9 @@ class JobQueue:
             step.attempts = attempt
             try:
                 async with asyncio.timeout(self._step_timeout):
-                    return await self._translate(step.page, job.options, previous, on_progress)
+                    return await self._translate(
+                        step.page, job.options, previous, job.volume, on_progress
+                    )
             except RETRYABLE as e:
                 step.error = self._describe(e)
                 self._emit(job)
