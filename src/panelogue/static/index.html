@@ -151,7 +151,7 @@
   <div id="wrap">
     <div class="strip" id="gallery"><div class="add" id="add" title="Upload a page">+</div></div>
     <div id="volbar" class="hidden">
-      <div class="field"><label for="volsel">Volume</label><select id="volsel"><option value="">— new —</option></select></div>
+      <div class="field"><label for="volsel">Volume</label><select id="volsel"><option value="">— new —</option><optgroup label="OpenMantra samples" id="samples"></optgroup></select></div>
       <div class="field"><label for="volname">Name</label><input type="text" id="volname" placeholder="My Manga vol. 1"></div>
       <button class="ghost" id="volcreate">Create</button>
       <button class="ghost" id="voladd" disabled>Add pages</button>
@@ -319,12 +319,36 @@ function switchTab(t) {
 
 async function refreshVolumes() {
   const d = await (await fetch("/volumes")).json();
-  const s = $("volsel");
-  s.innerHTML = '<option value="">— new —</option>';
-  for (const v of d.volumes) s.add(new Option(v, v, false, volume && v === volume.name));
+  const s = $("volsel"), g = $("samples");
+  s.querySelectorAll(":scope > option:not([value=''])").forEach(o => o.remove());
+  for (const v of d.volumes) s.insertBefore(new Option(v, v, false, volume && v === volume.name), g);
+  if (!g.children.length) {
+    const { samples } = await (await fetch("/samples")).json();
+    for (const b of samples) g.appendChild(new Option(b, "sample:" + b));
+  }
 }
 
-$("volsel").onchange = () => $("volsel").value ? loadVolume($("volsel").value) : setVolume(null);
+$("volsel").onchange = () => {
+  const v = $("volsel").value;
+  if (v.startsWith("sample:")) return importSample(v.slice(7));
+  v ? loadVolume(v) : setVolume(null);
+};
+
+async function importSample(book) {
+  setStatus(`Downloading ${book} from OpenMantra…`, { busy: true });
+  $("volsel").disabled = true;
+  try {
+    const d = await (await fetch(`/samples/${encodeURIComponent(book)}`, { method: "POST" })).json();
+    if (d.detail) throw new Error(d.detail);
+    setVolume(d);
+    await refreshVolumes();
+    setStatus(`${d.pages.length} pages in ${d.name}`);
+  } catch (err) {
+    setStatus(err.message, { error: true });
+  } finally {
+    $("volsel").disabled = false;
+  }
+}
 $("volcreate").onclick = async () => {
   const name = $("volname").value.trim();
   if (!name) return $("volname").focus();

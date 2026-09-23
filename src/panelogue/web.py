@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import mimetypes
@@ -12,8 +13,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
-from panelogue.detect import LANG, MODEL, list_vision_models
+from panelogue.detect import LANG, MODEL, list_vision_models, read_source
 from panelogue.jobs import PAGES, RESULTS, JobQueue
 
 load_dotenv()
@@ -33,6 +35,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/pages/files", StaticFiles(directory=PAGES), name="pages")
+SAMPLE_URL = "https://raw.githubusercontent.com/mantra-inc/open-mantra-dataset/main/images/{book}/ja/{page:03d}.jpg"
+SAMPLES = {
+    "tojime_no_siora": 46,
+    "balloon_dream": 38,
+    "tencho_isoro": 40,
+    "boureisougi": 36,
+    "rasetugari": 54,
+}
 
 
 def safe(name: str) -> str:
@@ -119,6 +129,26 @@ async def create_volume(name: str = Form(...)) -> dict[str, Any]:
 
 @app.get("/volumes/{name}")
 async def volume(name: str) -> dict[str, Any]:
+    return load_volume(name)
+
+
+@app.get("/samples")
+async def samples() -> dict[str, Any]:
+    return {"samples": list(SAMPLES)}
+
+
+@app.post("/samples/{book}")
+async def import_sample(book: str) -> dict[str, Any]:
+    if book not in SAMPLES:
+        raise HTTPException(404, "unknown sample")
+    name = f"OpenMantra {book}"
+    if not (VOLUMES / f"{safe(name)}.json").exists():
+        urls = [SAMPLE_URL.format(book=book, page=i) for i in range(SAMPLES[book])]
+        downloads = await asyncio.gather(*(run_in_threadpool(read_source, u) for u in urls))
+        pages = [
+            save_page(data, f"{book}_{i:03d}.jpg", mime) for i, (data, mime) in enumerate(downloads)
+        ]
+        save_volume(name, pages)
     return load_volume(name)
 
 
