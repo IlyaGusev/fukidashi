@@ -5,7 +5,6 @@
 - Do not force push.
 - Create a new commit. Do not amend a commit.
 - Do not remove a Git worktree unless the user asks.
-- Do not push to `main`. Use a feature branch and a PR.
 
 ## Conventions
 
