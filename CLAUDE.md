@@ -45,8 +45,9 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
 - `src/panelogue/static/index.html`: the UI.
 - `scripts/serve.py`: runs the app on http://localhost:8083. `scripts/detect_bubbles.py`: CLI.
 - `scripts/benchmark.py`: scores Nebius vision models on OpenMantra annotations (box IoU
-  P/R/F1, Japanese CER, chrF vs the English reference, latency, tokens). Raw runs cache under
-  `out/bench/runs/`, so reruns only call models for missing pages. Needs the `bench` extra.
+  P/R/F1, Japanese CER, chrF vs the English reference, latency, tokens), with thinking off and
+  at `--efforts` low and medium for reasoning models. Raw runs cache under `out/bench/runs/`,
+  so reruns only call models for missing pages. Needs the `bench` extra.
 
 ## Server restarts
 
