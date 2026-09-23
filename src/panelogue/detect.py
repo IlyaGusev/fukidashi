@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw
 BASE_URL = "https://api.tokenfactory.nebius.com/v1"
 MODEL = "zai-org/GLM-5.3-Flash"
 LANG = "English"
+MAX_TOKENS = 8192
 
 PROMPT = """\
 This is a page from a manga or comic ({w}x{h} pixels).
@@ -135,6 +136,8 @@ async def detect_bytes(
     lang: str = LANG,
     context: list[str] | None = None,
     on_progress: Progress = no_progress,
+    effort: str | None = None,
+    max_tokens: int = MAX_TOKENS,
 ) -> tuple[Image.Image, dict[str, Any]]:
     img = Image.open(BytesIO(data))
     w, h = img.size
@@ -144,11 +147,16 @@ async def detect_bytes(
         {"type": "image_url", "image_url": {"url": url}},
         {"type": "text", "text": PROMPT.format(w=w, h=h, lang=lang, context=ctx)},
     ]
+    extra_body: dict[str, Any] = {
+        "chat_template_kwargs": {"thinking": thinking, "enable_thinking": thinking}
+    }
+    if effort:
+        extra_body["reasoning_effort"] = effort
     kwargs: dict[str, Any] = {
         "model": model,
         "temperature": 0,
-        "max_tokens": 8192,
-        "extra_body": {"chat_template_kwargs": {"thinking": thinking, "enable_thinking": thinking}},
+        "max_tokens": max_tokens,
+        "extra_body": extra_body,
         "messages": [{"role": "user", "content": content}],
     }
     try:
@@ -162,6 +170,7 @@ async def detect_bytes(
         "size": [w, h],
         "model": model,
         "thinking": thinking,
+        "effort": effort,
         "lang": lang,
         "usage": usage,
     }
