@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Panelogue</title>
+<title>Fukidashi</title>
+<link rel="icon" href="/static/logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
 <style>
@@ -23,8 +24,8 @@
     display: flex; align-items: flex-end; gap: 16px; padding: 12px 20px;
     border-bottom: 1px solid var(--border); background: var(--panel);
   }
-  header h1 { font-size: 16px; font-weight: 600; margin: 0 0 6px; letter-spacing: 0.2px; }
-  header h1 span { color: var(--accent); }
+  header h1 { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; margin: 0 0 6px; letter-spacing: 0.2px; }
+  header h1 img { width: 28px; height: 28px; border-radius: 6px; }
   nav { display: flex; gap: 4px; margin-right: auto; margin-left: 12px; }
   nav button {
     background: transparent; color: var(--muted); font-weight: 500; padding: 8px 14px; border-radius: 8px 8px 0 0;
@@ -141,7 +142,7 @@
 </head>
 <body>
 <header>
-  <h1>Panel<span>o</span>gue</h1>
+  <h1><img src="/static/logo.png" alt="">Fukidashi</h1>
   <nav><button data-tab="page" class="active">Page</button><button data-tab="volume">Volume</button></nav>
   <div class="field"><label for="model">Model</label><select id="model"></select></div>
   <div class="field"><label for="lang">Translate to</label><input type="text" id="lang" value="English"></div>

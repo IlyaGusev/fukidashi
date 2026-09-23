@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from panelogue import jobs
-from panelogue.detect import BadOutput, Progress
-from panelogue.jobs import Job, JobQueue, Step
+from fukidashi import jobs
+from fukidashi.detect import BadOutput, Progress
+from fukidashi.jobs import Job, JobQueue, Step
 
 Behaviour = Callable[[str, int], Awaitable[None]]
 OPTIONS = {"model": "m", "thinking": False, "lang": "English"}
