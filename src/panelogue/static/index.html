@@ -486,7 +486,7 @@ function renderQueue() {
       <div class="row"><span class="kind">${j.kind}</span><span class="name" title="${esc(j.name)}">${esc(j.kind === "page" ? short(j.name) : j.name)}</span>
         <span class="state">${j.state}</span>${isActive(j) ? `<button class="x" title="Cancel">×</button>` : canRetry(j) ? `<button class="retry" title="Retry unfinished pages">↻</button>` : ""}</div>
       <div class="bar"><i style="width:${pct}%"></i></div>
-      <div class="sub">${esc(describe(j))}</div>
+      <div class="sub">${esc(j.options.model)} · ${esc(describe(j))}</div>
     </div>`;
   }).join("");
   $("queue").querySelectorAll(".job").forEach(el => {
@@ -500,7 +500,7 @@ function renderQueue() {
 function renderVolume() {
   const job = volume && latest("volume", volume.name);
   const active = job && isActive(job);
-  $("voltranslate").disabled = !volume || !volume.pages.length || !!active;
+  $("voltranslate").disabled = !volume || !volume.pages.length;
   $("volcancel").classList.toggle("hidden", !active);
   const bar = $("progress");
   bar.classList.toggle("failed", !!job && job.steps.some(s => s.state === "failed"));
@@ -515,7 +515,6 @@ function renderVolume() {
 
 function renderStatus() {
   const pageJob = current && activeJob("page", current);
-  go.classList.toggle("hidden", !!pageJob);
   go.disabled = !current;
   cancel.classList.toggle("hidden", !pageJob);
   if (tab === "volume") {
