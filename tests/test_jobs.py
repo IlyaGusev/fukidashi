@@ -1,21 +1,30 @@
 import asyncio
-import json
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from fukidashi import jobs
 from fukidashi.detect import BadOutput, Progress
-from fukidashi.jobs import Job, JobQueue, Step
+from fukidashi.jobs import ACTIVE, Duplicate, JobQueue
 
 Behaviour = Callable[[str, int], Awaitable[None]]
+Job = dict[str, Any]
+MakeQueue = Callable[..., Awaitable[JobQueue]]
 OPTIONS = {"model": "m", "thinking": False, "lang": "English"}
+DEFAULTS: dict[str, Any] = {"concurrency": 2, "attempts": 3, "step_timeout": 0.2, "backoff": 0}
 
 
 async def ok(page: str, attempt: int) -> None:
     pass
+
+
+async def hang(page: str, attempt: int) -> None:
+    await asyncio.sleep(60)
+
+
+async def slow(page: str, attempt: int) -> None:
+    await asyncio.sleep(0.05)
 
 
 class FakeTranslate:
@@ -41,192 +50,173 @@ class FakeTranslate:
         return {"bubbles": [{"text": page}], "usage": {"total_tokens": 1}}
 
 
-@pytest.fixture(autouse=True)
-def jobs_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setattr(jobs, "JOBS", tmp_path)
-    return tmp_path
+@pytest.fixture
+async def make_queue(tmp_path: Path) -> AsyncIterator[MakeQueue]:
+    queues: list[JobQueue] = []
+
+    async def make(translate: FakeTranslate, **kwargs: Any) -> JobQueue:
+        queue = JobQueue(translate, tmp_path / "jobs.db", **{**DEFAULTS, **kwargs})
+        await queue.start()
+        queues.append(queue)
+        return queue
+
+    yield make
+    for queue in queues:
+        await queue.stop()
 
 
-def make_queue(translate: FakeTranslate, **kwargs: Any) -> JobQueue:
-    defaults: dict[str, Any] = {"concurrency": 2, "attempts": 3, "step_timeout": 0.2, "backoff": 0}
-    return JobQueue(translate, **{**defaults, **kwargs})
-
-
-async def wait_for(job: Job, timeout: float = 5) -> Job:
+async def wait_for(queue: JobQueue, job_id: str, timeout: float = 5) -> Job:
     async with asyncio.timeout(timeout):
-        while job.active:
+        while True:
+            job = queue.get(job_id)
+            assert job is not None
+            if job["state"] not in ACTIVE:
+                return job
             await asyncio.sleep(0.01)
-    return job
 
 
 def states(job: Job) -> list[str]:
-    return [s.state for s in job.steps]
+    return [s["state"] for s in job["steps"]]
 
 
-async def test_pages_run_in_parallel_within_limit(jobs_dir: Path) -> None:
-    async def slow(page: str, attempt: int) -> None:
-        await asyncio.sleep(0.05)
-
+async def test_pages_run_in_parallel_within_limit(make_queue: MakeQueue) -> None:
     translate = FakeTranslate(slow)
-    queue = make_queue(translate, concurrency=2)
-    await queue.start()
-    job = await wait_for(queue.submit("volume", "v", ["p1", "p2", "p3", "p4"], OPTIONS))
-    assert job.state == "done"
+    queue = await make_queue(translate, concurrency=2)
+    submitted = queue.submit("volume", "v", ["p1", "p2", "p3", "p4"], OPTIONS)
+    job = await wait_for(queue, submitted["id"])
+    assert job["state"] == "done"
     assert states(job) == ["done"] * 4
     assert translate.max_in_flight == 2
-    assert [s.boxes for s in job.steps] == [1, 1, 1, 1]
-    assert json.loads((jobs_dir / f"{job.id}.json").read_text())["state"] == "done"
+    assert [s["boxes"] for s in job["steps"]] == [1, 1, 1, 1]
 
 
-async def test_previous_page_is_passed_as_context() -> None:
+async def test_previous_page_is_passed_as_context(make_queue: MakeQueue) -> None:
     translate = FakeTranslate()
-    queue = make_queue(translate)
-    await queue.start()
-    await wait_for(queue.submit("volume", "v", ["p1", "p2", "p3"], OPTIONS))
+    queue = await make_queue(translate)
+    await wait_for(queue, queue.submit("volume", "v", ["p1", "p2", "p3"], OPTIONS)["id"])
     assert sorted(translate.calls) == [("p1", None), ("p2", "p1"), ("p3", "p2")]
 
 
-async def test_bad_output_is_retried() -> None:
+async def test_bad_output_is_retried(make_queue: MakeQueue) -> None:
     async def flaky(page: str, attempt: int) -> None:
         if attempt < 3:
             raise BadOutput("garbage")
 
-    translate = FakeTranslate(flaky)
-    queue = make_queue(translate)
-    await queue.start()
-    job = await wait_for(queue.submit("page", "p1", ["p1"], OPTIONS))
-    assert job.state == "done"
-    assert job.steps[0].attempts == 3
-    assert job.steps[0].error is None
+    queue = await make_queue(FakeTranslate(flaky))
+    job = await wait_for(queue, queue.submit("page", "p1", ["p1"], OPTIONS)["id"])
+    assert job["state"] == "done"
+    assert job["steps"][0]["attempts"] == 3
+    assert job["steps"][0]["error"] is None
 
 
-async def test_hung_call_times_out_then_fails() -> None:
-    async def hang(page: str, attempt: int) -> None:
-        await asyncio.sleep(60)
-
-    translate = FakeTranslate(hang)
-    queue = make_queue(translate, attempts=2, step_timeout=0.05)
-    await queue.start()
-    job = await wait_for(queue.submit("page", "p1", ["p1"], OPTIONS))
-    assert job.state == "failed"
-    assert job.steps[0].state == "failed"
-    assert job.steps[0].attempts == 2
-    assert job.steps[0].error == "no answer within 0s"
+async def test_hung_call_times_out_then_fails(make_queue: MakeQueue) -> None:
+    queue = await make_queue(FakeTranslate(hang), attempts=2, step_timeout=0.05)
+    job = await wait_for(queue, queue.submit("page", "p1", ["p1"], OPTIONS)["id"])
+    assert job["state"] == "failed"
+    assert job["steps"][0]["state"] == "failed"
+    assert job["steps"][0]["attempts"] == 2
+    assert job["steps"][0]["error"] == "no answer within 0s"
 
 
-async def test_unexpected_error_fails_without_retry() -> None:
+async def test_unexpected_error_fails_without_retry(make_queue: MakeQueue) -> None:
     async def boom(page: str, attempt: int) -> None:
         raise KeyError("bubbles")
 
     translate = FakeTranslate(boom)
-    queue = make_queue(translate)
-    await queue.start()
-    job = await wait_for(queue.submit("volume", "v", ["p1", "p2"], OPTIONS))
-    assert job.state == "failed"
+    queue = await make_queue(translate)
+    job = await wait_for(queue, queue.submit("volume", "v", ["p1", "p2"], OPTIONS)["id"])
+    assert job["state"] == "failed"
     assert translate.attempts == {"p1": 1, "p2": 1}
-    assert job.steps[0].error == "KeyError: 'bubbles'"
+    assert job["steps"][0]["error"] == "KeyError: 'bubbles'"
 
 
-async def test_cancel_stops_running_and_queued_steps() -> None:
-    async def slow(page: str, attempt: int) -> None:
-        await asyncio.sleep(60)
-
-    translate = FakeTranslate(slow)
-    queue = make_queue(translate, concurrency=1)
-    await queue.start()
-    job = queue.submit("volume", "v", ["p1", "p2"], OPTIONS)
+async def test_cancel_stops_running_and_queued_steps(make_queue: MakeQueue) -> None:
+    translate = FakeTranslate(hang)
+    queue = await make_queue(translate, concurrency=1)
+    job_id = queue.submit("volume", "v", ["p1", "p2"], OPTIONS)["id"]
     await asyncio.sleep(0.02)
-    assert states(job) == ["running", "queued"]
-    queue.cancel(job)
-    await wait_for(job)
-    assert job.state == "cancelled"
+    assert states(queue.get(job_id) or {}) == ["running", "queued"]
+    queue.cancel(job_id)
+    job = await wait_for(queue, job_id)
+    assert job["state"] == "cancelled"
     assert states(job) == ["cancelled", "cancelled"]
+    await asyncio.sleep(0.02)
     assert translate.in_flight == 0
 
 
-async def test_retry_resubmits_only_unfinished_pages() -> None:
+async def test_workers_survive_a_cancel(make_queue: MakeQueue) -> None:
+    async def hang_p1(page: str, attempt: int) -> None:
+        if page == "p1":
+            await hang(page, attempt)
+
+    queue = await make_queue(FakeTranslate(hang_p1), concurrency=1)
+    first = queue.submit("page", "p1", ["p1"], OPTIONS)["id"]
+    await asyncio.sleep(0.02)
+    queue.cancel(first)
+    job = await wait_for(queue, queue.submit("page", "p2", ["p2"], OPTIONS)["id"])
+    assert job["state"] == "done"
+
+
+async def test_retry_resubmits_only_unfinished_pages(make_queue: MakeQueue) -> None:
     async def fail_p2(page: str, attempt: int) -> None:
         if page == "p2":
             raise BadOutput("garbage")
 
     translate = FakeTranslate(fail_p2)
-    queue = make_queue(translate)
-    await queue.start()
-    job = await wait_for(queue.submit("volume", "v", ["p1", "p2", "p3"], OPTIONS))
+    queue = await make_queue(translate)
+    job = await wait_for(queue, queue.submit("volume", "v", ["p1", "p2", "p3"], OPTIONS)["id"])
     assert states(job) == ["done", "failed", "done"]
     translate.behaviour = ok
-    again = await wait_for(queue.retry(job))
-    assert [s.page for s in again.steps] == ["p2"]
-    assert again.state == "done"
+    unfinished = [s["page"] for s in job["steps"] if s["state"] != "done"]
+    again = await wait_for(queue, queue.submit("volume", "v", unfinished, OPTIONS)["id"])
+    assert [s["page"] for s in again["steps"]] == ["p2"]
+    assert again["state"] == "done"
 
 
-async def test_restart_resumes_unfinished_jobs(jobs_dir: Path) -> None:
-    interrupted = Job(
-        "abc",
-        "volume",
-        "v",
-        OPTIONS,
-        [Step("p1", state="done", boxes=3), Step("p2", state="running"), Step("p3")],
-        state="running",
-    )
-    (jobs_dir / "abc.json").write_text(json.dumps(interrupted.to_dict()))
-    translate = FakeTranslate()
-    queue = make_queue(translate)
-    await queue.start()
-    job = await wait_for(queue.jobs["abc"])
-    assert job.state == "done"
-    assert states(job) == ["done", "done", "done"]
-    assert sorted(translate.calls) == [("p2", "p1"), ("p3", "p2")]
+async def test_single_pages_go_before_queued_volume_pages(make_queue: MakeQueue) -> None:
+    async def brief(page: str, attempt: int) -> None:
+        await asyncio.sleep(0.02)
+
+    translate = FakeTranslate(brief)
+    queue = await make_queue(translate, concurrency=1)
+    volume = queue.submit("volume", "v", ["v1", "v2", "v3"], OPTIONS)["id"]
+    await asyncio.sleep(0.005)
+    page = queue.submit("page", "single", ["single"], OPTIONS)["id"]
+    await wait_for(queue, page)
+    await wait_for(queue, volume)
+    assert [p for p, _ in translate.calls] == ["v1", "single", "v2", "v3"]
 
 
-async def test_stop_keeps_jobs_resumable(jobs_dir: Path) -> None:
-    async def slow(page: str, attempt: int) -> None:
-        await asyncio.sleep(60)
-
-    queue = make_queue(FakeTranslate(slow))
-    await queue.start()
-    job = queue.submit("page", "p1", ["p1"], OPTIONS)
+async def test_restart_resumes_unfinished_jobs(make_queue: MakeQueue) -> None:
+    first = await make_queue(FakeTranslate(hang))
+    job_id = first.submit("volume", "v", ["p1", "p2", "p3"], OPTIONS)["id"]
     await asyncio.sleep(0.02)
-    await queue.stop()
-    saved = json.loads((jobs_dir / f"{job.id}.json").read_text())
-    assert saved["state"] == "running"
-    assert saved["steps"][0]["state"] == "running"
+    assert states(first.get(job_id) or {}) == ["running", "running", "queued"]
+    await first.stop()
+
+    translate = FakeTranslate()
+    second = await make_queue(translate)
+    job = await wait_for(second, job_id)
+    assert job["state"] == "done"
+    assert states(job) == ["done", "done", "done"]
+    assert sorted(translate.calls) == [("p1", None), ("p2", "p1"), ("p3", "p2")]
 
 
-async def test_events_carry_snapshot_progress_and_job_updates() -> None:
-    queue = make_queue(FakeTranslate())
-    await queue.start()
-    events = queue.subscribe()
-    snapshot = await anext(events)
-    assert snapshot["type"] == "snapshot"
-    assert snapshot["concurrency"] == 2
-    job = queue.submit("page", "p1", ["p1"], OPTIONS)
-    seen: list[dict[str, Any]] = []
-    async with asyncio.timeout(5):
-        while not (seen and seen[-1]["type"] == "job" and seen[-1]["job"]["state"] == "done"):
-            seen.append(await anext(events))
-    types = [e["type"] for e in seen]
-    assert types[:2] == ["job", "job"]
-    assert {"type": "progress", "id": job.id, "step": 0, "phase": "writing", "chars": 10} in seen
-    assert seen[-1]["job"]["steps"][0]["boxes"] == 1
+async def test_progress_shows_up_on_running_steps(make_queue: MakeQueue) -> None:
+    queue = await make_queue(FakeTranslate(hang))
+    job_id = queue.submit("page", "p1", ["p1"], OPTIONS)["id"]
+    await asyncio.sleep(0.02)
+    [job] = queue.list_jobs()
+    assert job["id"] == job_id
+    assert job["steps"][0]["phase"] == "writing"
+    assert job["steps"][0]["chars"] == 10
 
 
-async def test_active_for_matches_only_identical_options() -> None:
-    translate = FakeTranslate(lambda page, attempt: asyncio.sleep(0.05))
-    queue = make_queue(translate)
-    job = queue.submit("page", "p1", ["p1"], OPTIONS)
-    assert queue.active_for("page", "p1", OPTIONS) is job
-    assert queue.active_for("page", "p1", {**OPTIONS, "model": "other"}) is None
-    await wait_for(job)
-    assert queue.active_for("page", "p1", OPTIONS) is None
-
-
-async def test_duplicate_message_names_the_settings() -> None:
-    translate = FakeTranslate(lambda page, attempt: asyncio.sleep(0.05))
-    queue = make_queue(translate)
+async def test_duplicate_submit_is_rejected_until_done(make_queue: MakeQueue) -> None:
+    queue = await make_queue(FakeTranslate(slow))
     job = queue.submit("page", "p1", ["p1"], {**OPTIONS, "thinking": True})
-    assert job.duplicate_message() == (
-        "m, thinking on, English is already queued for this page. "
-        "Change a setting to queue another run."
-    )
-    await wait_for(job)
+    with pytest.raises(Duplicate, match="m, thinking on, English is already queued for this page"):
+        queue.submit("page", "p1", ["p1"], {**OPTIONS, "thinking": True})
+    queue.submit("page", "p1", ["p1"], OPTIONS)
+    await wait_for(queue, job["id"])
+    queue.submit("page", "p1", ["p1"], {**OPTIONS, "thinking": True})
