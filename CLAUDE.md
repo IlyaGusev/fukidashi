@@ -28,22 +28,33 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
 - `src/fukidashi/detect.py`: VLM detection + translation of text boxes (async, streamed).
   Malformed model answers raise `BadOutput`. The client has no SDK retries and a per-read
   stall timeout (`FUKIDASHI_STALL_TIMEOUT`, default 60s).
-- `src/fukidashi/store.py`: page, result and volume files under `data/`; `translate_page`.
-- `src/fukidashi/jobs.py`: job queue on SQLite (`data/jobs.db`, tables `jobs` and `steps`).
-  `FUKIDASHI_WORKERS` worker tasks (default 2) each claim the next queued step: single pages
-  first, then volume pages, oldest job first. Each step gets `FUKIDASHI_ATTEMPTS` tries (default
-  3) with backoff on bad output, timeouts, connection, rate-limit and 5xx errors, and a hard
-  `FUKIDASHI_STEP_TIMEOUT` per try (default 600s). A page gets the previous page's text as
-  context only when that result is already on disk. Steps left running at startup go back to
+- `src/fukidashi/store.py`: `Store`, one SQLite file `data/fukidashi.db` plus image files under
+  `data/pages/` (content-addressed, one file can sit in several volumes). Tables: `volumes`
+  (title), `pages` (volume, position, file, `current` translation), `translations` (one row
+  per successful run: model, thinking, lang, bubbles, size, usage; rows never change). A page
+  keeps every run; `current` defaults to the newest and `set_current` pins an older one. Every
+  page belongs to exactly one volume; single uploads go into the `Inbox` volume. On first start
+  with an empty `volumes` table the old `data/volumes/*.json`, loose `data/pages/*` and
+  `data/results/*.json` are imported once (loose pages land in Inbox); the old files stay.
+- `src/fukidashi/jobs.py`: job queue in the same SQLite file (tables `jobs` and `steps`). A job
+  points to a volume and the run options; a step points to a page and, once done, to the
+  translation it made. `FUKIDASHI_WORKERS` worker tasks (default 2) each claim the next queued
+  step: one-page jobs first, then oldest job first. Each step gets `FUKIDASHI_ATTEMPTS` tries
+  (default 3) with backoff on bad output, timeouts, connection, rate-limit and 5xx errors, and a
+  hard `FUKIDASHI_STEP_TIMEOUT` per try (default 600s). A page gets the previous page's current
+  translation as context when that page has one. Steps left running at startup go back to
   queued, so jobs resume after a restart. The UI polls `GET /jobs` (latest 30 jobs, with
   streaming progress on running steps) every second while anything is active.
-  `POST /jobs/{id}/retry` resubmits the unfinished pages of a finished job.
-- `src/fukidashi/render.py`: typesets a result onto its page. Finds each bubble's white interior around
+  `POST /jobs/{id}/retry` resubmits the unfinished pages of a finished job. Deleting a page or
+  volume with an active step returns 409.
+- `src/fukidashi/render.py`: typesets a translation onto its page. Finds each bubble's white interior around
   the box, erases the ink with OpenCV inpainting and draws the translation in Comic Neue at the largest
-  size that fits the largest rectangle in that interior that holds the box center. Skips `sfx`. `store.render_page` caches the PNG under `data/rendered/`;
-  `GET /pages/{name}/rendered` serves it and the Typeset toggle in the UI shows it.
-- `src/fukidashi/web.py`: FastAPI routes only.
-- `tests/test_jobs.py`: queue tests with a fake translator. Run `uv run pytest`.
+  size that fits the largest rectangle in that interior that holds the box center. Skips `sfx`. `Store.render` caches the PNG under `data/rendered/<translation id>.png`;
+  `GET /translations/{id}/rendered` serves it and the Typeset toggle in the UI shows it.
+- `src/fukidashi/web.py`: FastAPI routes only. JSON bodies except uploads. Volumes, pages and
+  translations are addressed by integer id.
+- `tests/test_jobs.py`: queue tests with a fake translator. `tests/test_store.py`: legacy import,
+  reorder, context. Run `uv run pytest`.
 - `src/fukidashi/static/index.html`: the UI.
 - `scripts/serve.py`: runs the app on http://localhost:8083. `scripts/detect_bubbles.py`: CLI.
 - `scripts/benchmark.py`: scores Nebius vision models on OpenMantra annotations (box IoU

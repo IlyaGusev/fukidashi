@@ -5,6 +5,7 @@ import mimetypes
 import urllib.request
 from collections.abc import Callable
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 import openai
@@ -185,6 +186,19 @@ async def detect(
 ) -> tuple[Image.Image, dict[str, Any]]:
     data, mime = read_source(src)
     return await detect_bytes(data, mime, model, thinking, lang)
+
+
+async def detect_file(
+    path: Path,
+    options: dict[str, Any],
+    context: list[str] | None = None,
+    on_progress: Progress = no_progress,
+) -> dict[str, Any]:
+    mime = mimetypes.guess_type(path.name)[0] or "image/png"
+    _, result = await detect_bytes(
+        path.read_bytes(), mime, **options, context=context, on_progress=on_progress
+    )
+    return result
 
 
 def draw(img: Image.Image, result: dict[str, Any], out: str) -> None:
