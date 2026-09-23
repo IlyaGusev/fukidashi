@@ -2,7 +2,6 @@ import base64
 import functools
 import json
 import mimetypes
-import os
 import urllib.request
 from collections.abc import Callable
 from io import BytesIO
@@ -12,9 +11,7 @@ import openai
 from openai import AsyncOpenAI
 from PIL import Image, ImageDraw
 
-BASE_URL = "https://api.tokenfactory.nebius.com/v1"
-MODEL = "zai-org/GLM-5.3-Flash"
-LANG = "English"
+from panelogue.settings import settings
 
 PROMPT = """\
 This is a page from a manga or comic ({w}x{h} pixels).
@@ -44,11 +41,10 @@ def no_progress(phase: str, chars: int) -> None:
 
 @functools.cache
 def client() -> AsyncOpenAI:
-    stall = float(os.environ.get("PANELOGUE_STALL_TIMEOUT", "60"))
     return AsyncOpenAI(
-        base_url=BASE_URL,
-        api_key=os.environ["NEBIUS_API_TOKEN"],
-        timeout=openai.Timeout(connect=10, read=stall, write=30, pool=10),
+        base_url=settings.base_url,
+        api_key=settings.nebius_api_token,
+        timeout=openai.Timeout(connect=10, read=settings.stall_timeout, write=30, pool=10),
         max_retries=0,
     )
 
@@ -144,9 +140,9 @@ async def stream_with_optional(
 async def detect_bytes(
     data: bytes,
     mime: str,
-    model: str = MODEL,
+    model: str = settings.model,
     thinking: bool = False,
-    lang: str = LANG,
+    lang: str = settings.lang,
     context: list[str] | None = None,
     on_progress: Progress = no_progress,
 ) -> tuple[Image.Image, dict[str, Any]]:
@@ -161,7 +157,7 @@ async def detect_bytes(
     kwargs: dict[str, Any] = {
         "model": model,
         "temperature": 0,
-        "max_tokens": 65536,
+        "max_tokens": settings.max_tokens,
         "extra_body": {"chat_template_kwargs": {"thinking": thinking, "enable_thinking": thinking}},
         "messages": [{"role": "user", "content": content}],
     }
@@ -180,7 +176,7 @@ async def detect_bytes(
 
 
 async def detect(
-    src: str, model: str = MODEL, thinking: bool = False, lang: str = LANG
+    src: str, model: str = settings.model, thinking: bool = False, lang: str = settings.lang
 ) -> tuple[Image.Image, dict[str, Any]]:
     data, mime = read_source(src)
     return await detect_bytes(data, mime, model, thinking, lang)

@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Any
 
 import fire
-from dotenv import load_dotenv
 from sacrebleu.metrics.chrf import CHRF
 
-from panelogue.detect import LANG, detect_bytes, list_vision_models, read_source
+from panelogue.detect import detect_bytes, list_vision_models, read_source
+from panelogue.settings import settings
 
 REPO = "https://raw.githubusercontent.com/mantra-inc/open-mantra-dataset/main/"
 OUT = Path("out/bench")
@@ -214,10 +214,9 @@ def main(
     match_by: str = "box",
     threshold: float = 0.5,
     thinking: bool = False,
-    lang: str = LANG,
+    lang: str = settings.lang,
     concurrency: int = 4,
 ) -> None:
-    load_dotenv()
     model_list = (
         [models] if isinstance(models, str) else models or asyncio.run(list_vision_models())
     )
