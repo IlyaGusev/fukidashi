@@ -54,7 +54,7 @@ def detect_bytes(data: bytes, mime: str, model: str = MODEL, thinking: bool = Fa
     kwargs = dict(
         model=model,
         temperature=0,
-        max_tokens=8192,
+        max_tokens=65536,
         extra_body={"chat_template_kwargs": {"enable_thinking": thinking}},
         messages=[{
             "role": "user",
