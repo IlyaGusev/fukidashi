@@ -1,8 +1,10 @@
 import fire
 import uvicorn
 
+from panelogue.settings import settings
 
-def main(port: int = 8083, host: str = "127.0.0.1", reload: bool = False) -> None:
+
+def main(port: int = settings.port, host: str = settings.host, reload: bool = False) -> None:
     uvicorn.run("panelogue.web:app", host=host, port=port, reload=reload)
 
 
