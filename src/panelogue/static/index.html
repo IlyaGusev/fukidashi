@@ -89,6 +89,26 @@
   summary { padding: 10px 16px; cursor: pointer; color: var(--muted); font-size: 12px; user-select: none; }
   pre { margin: 0; padding: 12px 16px; max-height: 240px; overflow: auto; font: 11px/1.4 "JetBrains Mono", monospace; color: var(--muted); }
   input[type=file] { display: none; }
+  #gallery {
+    display: flex; gap: 8px; padding: 10px 12px; overflow-x: auto; border-bottom: 1px solid var(--border);
+    background: var(--panel); min-height: 92px; align-items: center;
+  }
+  #gallery .thumb {
+    flex: 0 0 auto; width: 56px; height: 72px; border-radius: 6px; border: 2px solid transparent;
+    background: var(--panel-2) center / cover no-repeat; cursor: pointer; transition: border-color .1s;
+  }
+  #gallery .thumb:hover { border-color: var(--muted); }
+  #gallery .thumb.active { border-color: var(--accent); }
+  #gallery .thumb.cached::after { content: ""; position: absolute; right: 3px; top: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--narration); }
+  #gallery .thumb { position: relative; }
+  #gallery .add {
+    flex: 0 0 auto; width: 56px; height: 72px; border-radius: 6px; border: 2px dashed var(--border);
+    display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 22px; cursor: pointer;
+  }
+  #gallery .add:hover { border-color: var(--accent); color: var(--accent); }
+  #gallery .hint { color: var(--muted); font-size: 12px; }
+  main { grid-template-rows: 1fr; }
+  #wrap { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; } aside { border-left: 0; border-top: 1px solid var(--border); } }
 </style>
 </head>
@@ -100,6 +120,8 @@
   <button id="go" disabled>Detect</button>
 </header>
 <main>
+  <div id="wrap">
+  <div id="gallery"><div class="add" id="add" title="Upload a page">+</div><span class="hint">Saved pages appear here.</span></div>
   <section id="canvas">
     <div id="drop">
       <p><strong>Drop a comic page here</strong>or click to choose a file</p>
@@ -107,6 +129,7 @@
     </div>
     <div id="stage"><img id="img" alt=""></div>
   </section>
+  </div>
   <aside>
     <div id="status">Pick a page to start.</div>
     <ul id="list"><li id="empty">No boxes yet.</li></ul>
@@ -120,27 +143,68 @@ const drop = $("drop"), file = $("file"), img = $("img"), stage = $("stage"), li
 const COLORS = { speech: "var(--speech)", thought: "var(--thought)", narration: "var(--narration)", sfx: "var(--sfx)" };
 let current = null, result = null;
 
-fetch("/models").then(r => r.json()).then(d => {
-  for (const m of d.models) model.add(new Option(m, m, false, m === d.default));
-});
+async function refreshGallery() {
+  const d = await (await fetch("/pages")).json();
+  const g = $("gallery");
+  g.querySelectorAll(".thumb, .hint").forEach(e => e.remove());
+  if (!d.pages.length) g.insertAdjacentHTML("beforeend", '<span class="hint">Saved pages appear here.</span>');
+  for (const { name: p, cached } of d.pages) {
+    const t = document.createElement("div");
+    t.className = "thumb" + (p === current ? " active" : "") + (cached ? " cached" : "");
+    t.title = p.slice(14);
+    t.dataset.page = p;
+    t.style.backgroundImage = `url(/pages/files/${encodeURIComponent(p)})`;
+    t.onclick = () => select(p);
+    g.appendChild(t);
+  }
+}
 
-drop.onclick = () => file.click();
-file.onchange = () => load(file.files[0]);
-["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
-["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
-drop.addEventListener("drop", e => load(e.dataTransfer.files[0]));
-document.addEventListener("paste", e => { const f = [...e.clipboardData.files][0]; if (f) load(f); });
-
-function load(f) {
-  if (!f || !f.type.startsWith("image/")) return;
-  current = f;
-  img.src = URL.createObjectURL(f);
+async function select(p) {
+  current = p;
+  img.src = `/pages/files/${encodeURIComponent(p)}`;
   drop.style.display = "none";
   stage.style.display = "block";
   go.disabled = false;
   clear();
-  setStatus(`${f.name} · ready`);
+  setStatus(`${p.slice(14)} · ready`);
+  $("gallery").querySelectorAll(".thumb").forEach(t => t.classList.toggle("active", t.dataset.page === p));
+  const r = await fetch(`/results/${encodeURIComponent(p)}`);
+  if (r.ok && current === p) show(await r.json(), "cached");
 }
+
+function show(d, label) {
+  result = d;
+  setStatus(`${d.bubbles.length} boxes · ${label} · ${d.model}${d.thinking ? " · thinking" : ""}`);
+  list.innerHTML = d.bubbles.map((b, i) => `
+    <li data-i="${i}" style="--c:${COLORS[b.kind] || COLORS.speech}" onmouseenter="activate(${i})">
+      <div class="meta"><span>${i + 1}</span><span class="kind">${b.kind}</span></div>
+      <div class="text">${esc(b.text)}</div>
+    </li>`).join("");
+  raw.textContent = JSON.stringify(d, null, 2);
+  if (img.complete) render(); else img.onload = render;
+}
+
+async function upload(f) {
+  if (!f || !f.type.startsWith("image/")) return;
+  setStatus("Uploading…", { busy: true });
+  const fd = new FormData();
+  fd.append("image", f);
+  const d = await (await fetch("/pages", { method: "POST", body: fd })).json();
+  await refreshGallery();
+  select(d.page);
+}
+refreshGallery();
+
+fetch("/models").then(r => r.json()).then(d => {
+  for (const m of d.models) model.add(new Option(m, m, false, m === d.default));
+});
+
+drop.onclick = $("add").onclick = () => file.click();
+file.onchange = () => upload(file.files[0]);
+["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => upload(e.dataTransfer.files[0]));
+document.addEventListener("paste", e => { const f = [...e.clipboardData.files][0]; if (f) upload(f); });
 
 function setStatus(text, opts = {}) {
   status.className = opts.error ? "error" : "";
@@ -181,22 +245,15 @@ go.onclick = async () => {
   const t0 = Date.now();
   const tick = setInterval(() => setStatus(`${model.value}${$("thinking").checked ? " · thinking" : ""} · ${((Date.now() - t0) / 1000).toFixed(0)}s`, { busy: true }), 250);
   const fd = new FormData();
-  fd.append("image", current);
+  fd.append("page", current);
   fd.append("model", model.value);
   fd.append("thinking", $("thinking").checked);
   try {
     const r = await fetch("/detect", { method: "POST", body: fd });
     const d = await r.json();
     if (d.error) throw new Error(d.error);
-    result = d;
-    setStatus(`${d.bubbles.length} boxes · ${((Date.now() - t0) / 1000).toFixed(1)}s · ${d.model}${d.thinking ? " · thinking" : ""}`);
-    list.innerHTML = d.bubbles.map((b, i) => `
-      <li data-i="${i}" style="--c:${COLORS[b.kind] || COLORS.speech}" onmouseenter="activate(${i})">
-        <div class="meta"><span>${i + 1}</span><span class="kind">${b.kind}</span></div>
-        <div class="text">${esc(b.text)}</div>
-      </li>`).join("");
-    raw.textContent = JSON.stringify(d, null, 2);
-    render();
+    show(d, `${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    refreshGallery();
   } catch (err) {
     setStatus(err.message, { error: true });
   } finally {
