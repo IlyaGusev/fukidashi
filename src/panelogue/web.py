@@ -172,9 +172,9 @@ async def create_job(
             raise HTTPException(400, "volume has no pages")
     else:
         raise HTTPException(400, "kind must be page or volume")
-    if queue.active_for(kind, name):
-        raise HTTPException(409, "already queued")
     options = {"model": model, "thinking": thinking, "lang": lang}
+    if queue.active_for(kind, name, options):
+        raise HTTPException(409, "already queued with these settings")
     return queue.submit(kind, name, pages, options).to_dict()
 
 
@@ -190,8 +190,8 @@ async def retry_job(job_id: str) -> dict[str, Any]:
     job = find_job(job_id)
     if job.active or not job.unfinished_pages:
         raise HTTPException(400, "nothing to retry")
-    if queue.active_for(job.kind, job.name):
-        raise HTTPException(409, "already queued")
+    if queue.active_for(job.kind, job.name, job.options):
+        raise HTTPException(409, "already queued with these settings")
     return queue.retry(job).to_dict()
 
 

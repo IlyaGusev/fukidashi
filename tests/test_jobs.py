@@ -209,3 +209,13 @@ async def test_events_carry_snapshot_progress_and_job_updates() -> None:
     assert types[:2] == ["job", "job"]
     assert {"type": "progress", "id": job.id, "step": 0, "phase": "writing", "chars": 10} in seen
     assert seen[-1]["job"]["steps"][0]["boxes"] == 1
+
+
+async def test_active_for_matches_only_identical_options() -> None:
+    translate = FakeTranslate(lambda page, attempt: asyncio.sleep(0.05))
+    queue = make_queue(translate)
+    job = queue.submit("page", "p1", ["p1"], OPTIONS)
+    assert queue.active_for("page", "p1", OPTIONS) is job
+    assert queue.active_for("page", "p1", {**OPTIONS, "model": "other"}) is None
+    await wait_for(job)
+    assert queue.active_for("page", "p1", OPTIONS) is None

@@ -101,9 +101,9 @@ class JobQueue:
             runner.cancel()
         await asyncio.gather(*self._runners.values(), return_exceptions=True)
 
-    def active_for(self, kind: str, name: str) -> Job | None:
+    def active_for(self, kind: str, name: str, options: dict[str, Any]) -> Job | None:
         for job in self.jobs.values():
-            if job.active and job.kind == kind and job.name == name:
+            if job.active and (job.kind, job.name, job.options) == (kind, name, options):
                 return job
         return None
 
