@@ -57,6 +57,14 @@ class Job:
     def unfinished_pages(self) -> list[str]:
         return [s.page for s in self.steps if s.state != "done"]
 
+    def duplicate_message(self) -> str:
+        thinking = "thinking on" if self.options["thinking"] else "thinking off"
+        settings = f"{self.options['model']}, {thinking}, {self.options['lang']}"
+        return (
+            f"{settings} is already {self.state} for this {self.kind}. "
+            "Change a setting to queue another run."
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
