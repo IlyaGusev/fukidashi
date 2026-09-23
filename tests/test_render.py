@@ -38,6 +38,19 @@ def test_render_replaces_text_and_keeps_outline() -> None:
     assert dark(out, (98, 240, 106, 260)) > 0
 
 
+def test_text_stays_inside_a_jagged_bubble() -> None:
+    page = Image.new("RGB", (400, 400), "gray")
+    draw = ImageDraw.Draw(page)
+    draw.rectangle((150, 50, 250, 350), fill="white", outline="black", width=4)
+    draw.rectangle((50, 150, 350, 250), fill="white", outline="black", width=4)
+    draw.rectangle((154, 150, 246, 250), fill="white")
+    gray = np.array(page.convert("L"))
+    inside = np.zeros_like(gray)
+    x1, y1, x2, y2 = place(gray, inside, (120, 120, 280, 280))
+    assert inside[y1:y2, x1:x2].all()
+    assert (x2 - x1) * (y2 - y1) >= 80 * 280
+
+
 def test_sfx_and_empty_translations_are_left_alone() -> None:
     page = bubble_page()
     bubbles = [
