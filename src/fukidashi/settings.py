@@ -9,7 +9,7 @@ class Settings(BaseSettings):
 
     nebius_api_token: str = Field(default="", validation_alias="NEBIUS_API_TOKEN")
     base_url: str = "https://api.tokenfactory.nebius.com/v1"
-    model: str = "zai-org/GLM-5.3-Flash"
+    model: str = "moonshotai/Kimi-K3"
     lang: str = "English"
     max_tokens: int = 65536
     stall_timeout: float = 60
