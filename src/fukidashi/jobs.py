@@ -8,9 +8,9 @@ from typing import Any
 
 import openai
 
-from panelogue.detect import BadOutput, Progress
-from panelogue.settings import settings
-from panelogue.store import translate_page
+from fukidashi.detect import BadOutput, Progress
+from fukidashi.settings import settings
+from fukidashi.store import translate_page
 
 ACTIVE = ("queued", "running")
 ACTIVE_SQL = "(" + ", ".join(f"'{s}'" for s in ACTIVE) + ")"

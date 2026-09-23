@@ -8,9 +8,9 @@ from typing import Any
 
 from PIL import Image
 
-from panelogue.detect import Progress, detect_bytes, no_progress
-from panelogue.render import render
-from panelogue.settings import settings
+from fukidashi.detect import Progress, detect_bytes, no_progress
+from fukidashi.render import render
+from fukidashi.settings import settings
 
 PAGES = settings.data_dir / "pages"
 RESULTS = settings.data_dir / "results"

@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from panelogue.detect import BadOutput, Progress
-from panelogue.jobs import ACTIVE, Duplicate, JobQueue
+from fukidashi.detect import BadOutput, Progress
+from fukidashi.jobs import ACTIVE, Duplicate, JobQueue
 
 Behaviour = Callable[[str, int], Awaitable[None]]
 Job = dict[str, Any]

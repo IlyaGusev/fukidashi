@@ -6,7 +6,7 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image, ImageDraw, ImageFont
 
-from panelogue.detect import clamp
+from fukidashi.detect import clamp
 
 FONT = Path(__file__).parent / "static" / "fonts" / "ComicNeue-Bold.ttf"
 INK = 128

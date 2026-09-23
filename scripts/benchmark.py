@@ -9,8 +9,8 @@ from typing import Any
 import fire
 from sacrebleu.metrics.chrf import CHRF
 
-from panelogue.detect import detect_bytes, list_vision_models, read_source
-from panelogue.settings import settings
+from fukidashi.detect import detect_bytes, list_vision_models, read_source
+from fukidashi.settings import settings
 
 REPO = "https://raw.githubusercontent.com/mantra-inc/open-mantra-dataset/main/"
 OUT = Path("out/bench")
