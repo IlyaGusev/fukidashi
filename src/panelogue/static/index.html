@@ -62,6 +62,8 @@
   .strip .thumb.active { border-color: var(--accent); }
   .strip .thumb.cached::after { content: ""; position: absolute; right: 3px; top: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
   .strip .thumb.busy::after { content: ""; position: absolute; right: 3px; top: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--sfx); animation: pulse .8s ease-in-out infinite alternate; }
+  .strip .thumb.queued::after { content: ""; position: absolute; right: 3px; top: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .strip .thumb.failed::after { content: ""; position: absolute; right: 3px; top: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
   .strip .thumb b { position: absolute; left: 0; bottom: 0; right: 0; background: rgba(0,0,0,.6); color: #fff; font: 600 10px/1 Inter; padding: 3px; text-align: center; border-radius: 0 0 4px 4px; }
   @keyframes pulse { to { opacity: .3; } }
   .strip .add {
@@ -74,6 +76,8 @@
   #volbar .field { flex: 0 0 auto; }
   #progress { flex: 1; height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; align-self: center; }
   #progress i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .3s; }
+  #progress.failed i { background: var(--accent); }
+  #volcancel, #cancel { background: var(--panel-2); color: var(--accent); border: 1px solid var(--border); }
   #canvas { flex: 1; padding: 20px; overflow: auto; display: flex; align-items: flex-start; justify-content: center; }
   #drop {
     width: 100%; max-width: 900px; min-height: 60vh; border: 2px dashed var(--border);
@@ -99,6 +103,24 @@
   #status.error { color: var(--accent); }
   .spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  #queue { border-bottom: 1px solid var(--border); max-height: 40%; overflow: auto; }
+  #queue:empty { display: none; }
+  .job { padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 12px; cursor: pointer; }
+  .job:last-child { border-bottom: 0; }
+  .job:hover { background: var(--panel-2); }
+  .job .row { display: flex; align-items: center; gap: 8px; }
+  .job .kind { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+  .job .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .job .state { color: var(--muted); }
+  .job.running .state { color: var(--sfx); }
+  .job.done .state { color: var(--ok); }
+  .job.failed .state, .job.interrupted .state { color: var(--accent); }
+  .job .x { background: transparent; color: var(--muted); padding: 0 4px; font-size: 16px; line-height: 1; align-self: center; }
+  .job .x:hover { color: var(--accent); }
+  .job .bar { height: 4px; background: var(--panel-2); border-radius: 2px; overflow: hidden; margin: 6px 0 4px; }
+  .job .bar i { display: block; height: 100%; background: var(--ok); transition: width .3s; }
+  .job.failed .bar i, .job.cancelled .bar i, .job.interrupted .bar i { background: var(--muted); }
+  .job .sub { color: var(--muted); }
   #list { flex: 1; overflow: auto; padding: 12px; margin: 0; list-style: none; }
   #list li { background: var(--panel-2); border-left: 3px solid var(--c); border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; cursor: pointer; transition: background .1s; }
   #list li:hover, #list li.active { background: color-mix(in srgb, var(--c) 18%, var(--panel-2)); }
@@ -123,6 +145,7 @@
   <div class="field"><label for="lang">Translate to</label><input type="text" id="lang" value="English"></div>
   <label class="toggle"><input type="checkbox" id="thinking"><span>Thinking</span></label>
   <button id="go" disabled>Translate page</button>
+  <button id="cancel" class="hidden">Cancel</button>
 </header>
 <main>
   <div id="wrap">
@@ -134,6 +157,7 @@
       <button class="ghost" id="voladd" disabled>Add pages</button>
       <div id="progress"><i></i></div>
       <button id="voltranslate" disabled>Translate volume</button>
+      <button id="volcancel" class="hidden">Cancel</button>
     </div>
     <div class="strip hidden" id="volstrip"></div>
     <section id="canvas">
@@ -143,6 +167,7 @@
   </div>
   <aside>
     <div id="status">Pick a page to start.</div>
+    <div id="queue"></div>
     <ul id="list"><li id="empty">No boxes yet.</li></ul>
     <details><summary>Raw JSON</summary><pre id="raw"></pre></details>
   </aside>
@@ -152,9 +177,11 @@
 <script>
 const $ = id => document.getElementById(id);
 const drop = $("drop"), img = $("img"), stage = $("stage"), list = $("list"), raw = $("raw"),
-      status = $("status"), go = $("go"), model = $("model"), lang = $("lang");
+      status = $("status"), go = $("go"), cancel = $("cancel"), model = $("model"), lang = $("lang");
 const COLORS = { speech: "var(--speech)", thought: "var(--thought)", narration: "var(--narration)", sfx: "var(--sfx)" };
-let tab = "page", current = null, result = null, volume = null, poll = null;
+const ACTIVE = ["queued", "running"];
+let tab = "page", current = null, result = null, volume = null;
+const jobs = new Map();
 
 fetch("/models").then(r => r.json()).then(d => {
   for (const m of d.models) model.add(new Option(m, m, false, m === d.default));
@@ -164,6 +191,12 @@ fetch("/models").then(r => r.json()).then(d => {
 const esc = s => (s || "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 const options = () => ({ model: model.value, thinking: $("thinking").checked, lang: lang.value });
 const form = obj => { const fd = new FormData(); for (const [k, v] of Object.entries(obj)) fd.append(k, v); return fd; };
+const short = p => p.slice(14);
+const now = () => Date.now() / 1000;
+const secs = s => s < 60 ? `${s.toFixed(s < 10 ? 1 : 0)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+const kilo = n => n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`;
+const tokens = job => job.steps.reduce((n, s) => n + (s.usage.total_tokens || 0), 0);
+const isActive = job => ACTIVE.includes(job.state);
 
 function setStatus(text, opts = {}) {
   status.className = opts.error ? "error" : "";
@@ -197,9 +230,8 @@ function activate(i) {
   document.querySelectorAll(`[data-i="${i}"]`).forEach(e => e.classList.add("active"));
 }
 
-function show(d, label) {
+function show(d) {
   result = d;
-  setStatus(`${d.bubbles.length} boxes · ${label} · ${d.model}${d.thinking ? " · thinking" : ""} · ${d.lang || ""}`);
   list.innerHTML = d.bubbles.map((b, i) => `
     <li data-i="${i}" style="--c:${COLORS[b.kind] || COLORS.speech}" onmouseenter="activate(${i})">
       <div class="meta"><span>${i + 1}</span><span class="kind">${b.kind}</span></div>
@@ -210,10 +242,10 @@ function show(d, label) {
   if (img.complete) render(); else img.onload = render;
 }
 
-function thumb(p, extra = "") {
+function thumb(p) {
   const t = document.createElement("div");
-  t.className = "thumb" + (p.name === current ? " active" : "") + (p.cached ? " cached" : "") + extra;
-  t.title = p.name.slice(14);
+  t.className = "thumb" + (p.name === current ? " active" : "") + (p.cached ? " cached" : "");
+  t.title = short(p.name);
   t.dataset.page = p.name;
   t.style.backgroundImage = `url(/pages/files/${encodeURIComponent(p.name)})`;
   t.onclick = () => select(p.name);
@@ -225,12 +257,11 @@ async function select(p) {
   img.src = `/pages/files/${encodeURIComponent(p)}`;
   drop.style.display = "none";
   stage.style.display = "block";
-  go.disabled = false;
   clear();
-  setStatus(`${p.slice(14)} · ready`);
   document.querySelectorAll(".thumb").forEach(t => t.classList.toggle("active", t.dataset.page === p));
   const r = await fetch(`/results/${encodeURIComponent(p)}`);
-  if (r.ok && current === p) show(await r.json(), "cached");
+  if (r.ok && current === p) show(await r.json());
+  renderStatus();
 }
 
 async function refreshGallery() {
@@ -257,25 +288,20 @@ $("file").onchange = () => upload($("file").files[0]);
 drop.addEventListener("drop", e => tab === "page" ? upload(e.dataTransfer.files[0]) : addPages(e.dataTransfer.files));
 document.addEventListener("paste", e => { const f = [...e.clipboardData.files][0]; if (f && tab === "page") upload(f); });
 
-go.onclick = async () => {
-  if (!current) return;
-  clear();
-  go.disabled = true;
-  const t0 = Date.now();
-  const tick = setInterval(() => setStatus(`${model.value}${$("thinking").checked ? " · thinking" : ""} · ${((Date.now() - t0) / 1000).toFixed(0)}s`, { busy: true }), 250);
-  try {
-    const r = await fetch("/detect", { method: "POST", body: form({ page: current, ...options() }) });
-    const d = await r.json();
-    if (d.error || d.detail) throw new Error(d.error || d.detail);
-    show(d, `${((Date.now() - t0) / 1000).toFixed(1)}s`);
-    tab === "page" ? refreshGallery() : loadVolume(volume.name);
-  } catch (err) {
-    setStatus(err.message, { error: true });
-  } finally {
-    clearInterval(tick);
-    go.disabled = false;
-  }
-};
+async function submit(kind, name) {
+  const r = await fetch("/jobs", { method: "POST", body: form({ kind, name, ...options() }) });
+  const d = await r.json();
+  if (d.detail) return setStatus(d.detail, { error: true });
+  jobs.set(d.id, d);
+  renderAll();
+}
+
+async function cancelJob(id) {
+  await fetch(`/jobs/${id}/cancel`, { method: "POST" });
+}
+
+go.onclick = () => { if (current) { clear(); submit("page", current); } };
+cancel.onclick = () => { const j = activeJob("page", current); if (j) cancelJob(j.id); };
 
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => switchTab(b.dataset.tab));
 function switchTab(t) {
@@ -286,9 +312,9 @@ function switchTab(t) {
   $("volstrip").classList.toggle("hidden", t !== "volume");
   drop.querySelector("strong").textContent = t === "page" ? "Drop a comic page here" : "Drop the pages of a volume here";
   current = null; clear();
-  drop.style.display = ""; stage.style.display = "none"; go.disabled = true;
-  setStatus(t === "page" ? "Pick a page to start." : "Pick or create a volume.");
+  drop.style.display = ""; stage.style.display = "none";
   if (t === "volume") refreshVolumes();
+  renderAll();
 }
 
 async function refreshVolumes() {
@@ -308,6 +334,8 @@ $("volcreate").onclick = async () => {
 };
 $("voladd").onclick = () => $("files").click();
 $("files").onchange = () => addPages($("files").files);
+$("voltranslate").onclick = () => submit("volume", volume.name);
+$("volcancel").onclick = () => { const j = activeJob("volume", volume?.name); if (j) cancelJob(j.id); };
 
 async function addPages(files) {
   if (!volume) return setStatus("Create or pick a volume first.", { error: true });
@@ -317,7 +345,6 @@ async function addPages(files) {
   if (!n) return;
   setStatus(`Uploading ${n} pages…`, { busy: true });
   setVolume(await (await fetch(`/volumes/${encodeURIComponent(volume.name)}/pages`, { method: "POST", body: fd })).json());
-  setStatus(`${volume.pages.length} pages in ${volume.name}`);
 }
 
 async function loadVolume(name) {
@@ -326,37 +353,167 @@ async function loadVolume(name) {
 
 function setVolume(v) {
   volume = v;
-  $("voladd").disabled = $("voltranslate").disabled = !v;
+  $("voladd").disabled = !v;
   const s = $("volstrip");
   s.innerHTML = "";
-  if (!v) { $("progress").firstElementChild.style.width = 0; return; }
-  $("volsel").value = v.name;
-  if (!v.pages.length) s.insertAdjacentHTML("beforeend", '<span class="hint">No pages yet. Click “Add pages” or drop files.</span>');
-  v.pages.forEach((p, i) => {
-    const t = thumb(p, v.job?.running && v.job.current === p.name ? " busy" : "");
-    t.insertAdjacentHTML("beforeend", `<b>${i + 1}</b>`);
-    s.appendChild(t);
-  });
-  const job = v.job;
-  $("progress").firstElementChild.style.width = job ? `${100 * job.done / Math.max(1, job.total)}%` : 0;
-  $("voltranslate").disabled = !!job?.running || !v.pages.length;
-  if (job?.running) {
-    setStatus(`Translating ${job.done + 1}/${job.total} · ${job.current?.slice(14) || ""}`, { busy: true });
-    clearTimeout(poll);
-    poll = setTimeout(() => loadVolume(v.name), 2000);
-  } else if (job) {
-    setStatus(`Done: ${job.total - job.errors.length}/${job.total} pages${job.errors.length ? " · " + job.errors.length + " failed" : ""}`, { error: !!job.errors.length });
-    if (job.errors.length) raw.textContent = job.errors.join("\n");
-    if (current && v.pages.some(p => p.name === current)) select(current);
+  if (v) {
+    $("volsel").value = v.name;
+    if (!v.pages.length) s.insertAdjacentHTML("beforeend", '<span class="hint">No pages yet. Click “Add pages” or drop files.</span>');
+    v.pages.forEach((p, i) => {
+      const t = thumb(p);
+      t.insertAdjacentHTML("beforeend", `<b>${i + 1}</b>`);
+      s.appendChild(t);
+    });
   }
+  renderAll();
 }
 
-$("voltranslate").onclick = async () => {
-  const r = await fetch(`/volumes/${encodeURIComponent(volume.name)}/translate`, { method: "POST", body: form(options()) });
-  const d = await r.json();
-  if (d.detail) return setStatus(d.detail, { error: true });
-  setVolume(d);
+const events = new EventSource("/events");
+events.onmessage = e => {
+  const ev = JSON.parse(e.data);
+  if (ev.type === "snapshot") {
+    jobs.clear();
+    ev.jobs.forEach(j => jobs.set(j.id, j));
+  } else if (ev.type === "job") {
+    const prev = jobs.get(ev.job.id);
+    jobs.set(ev.job.id, { ...ev.job, progress: prev?.progress });
+    onJobChange(ev.job, prev);
+  } else if (ev.type === "progress") {
+    const j = jobs.get(ev.id);
+    if (j) j.progress = { ...ev, at: now() };
+  } else return;
+  renderAll();
 };
+
+function onJobChange(job, prev) {
+  const stepFor = (j, page) => j?.steps.find(s => s.page === page);
+  const step = stepFor(job, current), was = stepFor(prev, current);
+  if (step?.state === "done" && was?.state !== "done") select(current);
+  if (job.kind === "page" && job.name === current && ["failed", "cancelled"].includes(job.state)) clear();
+  if (!isActive(job) && prev && isActive(prev) && tab === "page") refreshGallery();
+}
+
+const latest = (kind, name) => [...jobs.values()].filter(j => j.kind === kind && j.name === name).sort((a, b) => b.created - a.created)[0];
+const activeJob = (kind, name) => { const j = latest(kind, name); return j && isActive(j) ? j : null; };
+const stepOf = (page) => {
+  for (const j of [...jobs.values()].sort((a, b) => b.created - a.created)) {
+    const s = j.steps.find(s => s.page === page);
+    if (s && isActive(j)) return { job: j, step: s };
+  }
+  return null;
+};
+
+function queuePosition(job) {
+  return [...jobs.values()].filter(j => j.state === "queued" && j.created <= job.created).length;
+}
+
+function eta(job) {
+  const done = job.steps.filter(s => s.state === "done");
+  if (!done.length) return null;
+  const avg = done.reduce((n, s) => n + s.finished - s.started, 0) / done.length;
+  const running = job.steps.find(s => s.state === "running");
+  const left = job.steps.filter(s => s.state === "queued").length * avg + (running ? Math.max(0, avg - (now() - running.started)) : 0);
+  return { avg, left };
+}
+
+function describeStep(job, step, index) {
+  const p = job.progress?.step === index ? job.progress : null;
+  const elapsed = secs(now() - step.started);
+  if (!p) return `${short(step.page)} · waiting for model · ${elapsed}`;
+  return `${short(step.page)} · ${p.phase} · ${kilo(p.chars)} chars · ${elapsed}`;
+}
+
+function describe(job) {
+  const total = job.steps.length, done = job.steps.filter(s => s.state === "done").length;
+  const failed = job.steps.filter(s => s.state === "failed").length;
+  const counts = total > 1 ? `${done}/${total} pages` : `${done ? "1 page" : ""}`;
+  if (job.state === "queued") return `queued · position ${queuePosition(job)}`;
+  if (job.state === "running") {
+    const i = job.steps.findIndex(s => s.state === "running");
+    const parts = [];
+    if (total > 1) parts.push(`${done}/${total}`);
+    if (i >= 0) parts.push(describeStep(job, job.steps[i], i));
+    const e = eta(job);
+    if (e && total > 1) parts.push(`avg ${secs(e.avg)}/page · ~${secs(e.left)} left`);
+    return parts.join(" · ");
+  }
+  const took = job.finished && job.started ? secs(job.finished - job.started) : "";
+  const parts = [job.state, counts, failed ? `${failed} failed` : "", took, tokens(job) ? `${kilo(tokens(job))} tokens` : ""];
+  return parts.filter(Boolean).join(" · ");
+}
+
+function renderQueue() {
+  const rows = [...jobs.values()].sort((a, b) => (isActive(b) - isActive(a)) || b.created - a.created).slice(0, 6);
+  $("queue").innerHTML = rows.map(j => {
+    const total = j.steps.length, finished = j.steps.filter(s => s.finished).length;
+    const pct = isActive(j) ? 100 * finished / total : 100;
+    return `<div class="job ${j.state}" data-id="${j.id}">
+      <div class="row"><span class="kind">${j.kind}</span><span class="name" title="${esc(j.name)}">${esc(j.kind === "page" ? short(j.name) : j.name)}</span>
+        <span class="state">${j.state}</span>${isActive(j) ? `<button class="x" title="Cancel">×</button>` : ""}</div>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      <div class="sub">${esc(describe(j))}</div>
+    </div>`;
+  }).join("");
+  $("queue").querySelectorAll(".job").forEach(el => {
+    const j = jobs.get(el.dataset.id);
+    el.querySelector(".x")?.addEventListener("click", e => { e.stopPropagation(); cancelJob(j.id); });
+    el.onclick = () => j.kind === "volume" ? (tab !== "volume" && switchTab("volume"), loadVolume(j.name)) : (tab !== "page" && switchTab("page"), select(j.name));
+  });
+}
+
+function renderVolume() {
+  const job = volume && latest("volume", volume.name);
+  const active = job && isActive(job);
+  $("voltranslate").disabled = !volume || !volume.pages.length || !!active;
+  $("volcancel").classList.toggle("hidden", !active);
+  const bar = $("progress");
+  bar.classList.toggle("failed", !!job && job.steps.some(s => s.state === "failed"));
+  bar.firstElementChild.style.width = job ? `${100 * job.steps.filter(s => s.finished).length / job.steps.length}%` : 0;
+  $("volstrip").querySelectorAll(".thumb").forEach(t => {
+    const s = job?.steps.find(s => s.page === t.dataset.page);
+    t.classList.toggle("queued", !!active && s?.state === "queued");
+    t.classList.toggle("busy", s?.state === "running");
+    t.classList.toggle("failed", s?.state === "failed");
+  });
+}
+
+function renderStatus() {
+  const pageJob = current && activeJob("page", current);
+  go.classList.toggle("hidden", !!pageJob);
+  go.disabled = !current;
+  cancel.classList.toggle("hidden", !pageJob);
+  if (tab === "volume") {
+    if (!volume) return setStatus("Pick or create a volume.");
+    const job = latest("volume", volume.name);
+    if (!job) return setStatus(`${volume.pages.length} pages in ${volume.name}`);
+    if (isActive(job)) return setStatus(describe(job), { busy: true });
+    if (!current || !job.steps.some(s => s.page === current)) {
+      const errors = job.steps.filter(s => s.error).map(s => `${short(s.page)}: ${s.error}`);
+      if (errors.length) raw.textContent = errors.join("\n");
+      return setStatus(describe(job), { error: job.state === "failed" });
+    }
+  }
+  if (!current) return setStatus("Pick a page to start.");
+  const hit = stepOf(current);
+  if (hit) {
+    const { job, step } = hit;
+    const i = job.steps.indexOf(step);
+    if (step.state === "running") return setStatus(describeStep(job, step, i), { busy: true });
+    return setStatus(`${short(current)} · ${describe(job)}`, { busy: true });
+  }
+  const last = latest("page", current);
+  if (last && !result && ["failed", "cancelled", "interrupted"].includes(last.state)) {
+    return setStatus(`${short(current)} · ${last.state}${last.steps[0].error ? " · " + last.steps[0].error : ""}`, { error: last.state === "failed" });
+  }
+  if (result) {
+    const u = result.usage?.total_tokens;
+    return setStatus(`${result.bubbles.length} boxes · ${result.model}${result.thinking ? " · thinking" : ""} · ${result.lang || ""}${u ? " · " + kilo(u) + " tokens" : ""}`);
+  }
+  setStatus(`${short(current)} · ready`);
+}
+
+function renderAll() { renderQueue(); renderVolume(); renderStatus(); }
+setInterval(() => { if ([...jobs.values()].some(isActive)) renderAll(); }, 500);
 
 refreshGallery();
 window.addEventListener("resize", render);
