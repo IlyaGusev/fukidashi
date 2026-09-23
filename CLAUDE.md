@@ -47,4 +47,6 @@ every process on the port also kills ngrok. Restart only the listener:
 kill $(lsof -t -sTCP:LISTEN -i :8083); (setsid nohup uv run scripts/serve.py > out/serve.log 2>&1 &)
 ```
 
-Never use `kill $(lsof -t -i :8083)` or `pkill -f` patterns that match ngrok.
+`make serve` does this and waits until the app answers. `make stop`, `make log`, `make test`
+and `make check` also exist. Never use `kill $(lsof -t -i :8083)` or `pkill -f` patterns that
+match ngrok.
