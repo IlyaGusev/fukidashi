@@ -4,15 +4,15 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
 from typing import Any
 
 import openai
 
 from panelogue.detect import BadOutput, Progress
+from panelogue.settings import settings
 from panelogue.store import translate_page, write_json
 
-JOBS = Path("data/jobs")
+JOBS = settings.data_dir / "jobs"
 ACTIVE = ("queued", "running")
 RETRYABLE = (
     BadOutput,
@@ -56,6 +56,14 @@ class Job:
     @property
     def unfinished_pages(self) -> list[str]:
         return [s.page for s in self.steps if s.state != "done"]
+
+    def duplicate_message(self) -> str:
+        thinking = "thinking on" if self.options["thinking"] else "thinking off"
+        settings = f"{self.options['model']}, {thinking}, {self.options['lang']}"
+        return (
+            f"{settings} is already {self.state} for this {self.kind}. "
+            "Change a setting to queue another run."
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

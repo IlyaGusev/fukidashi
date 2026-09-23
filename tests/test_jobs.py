@@ -219,3 +219,14 @@ async def test_active_for_matches_only_identical_options() -> None:
     assert queue.active_for("page", "p1", {**OPTIONS, "model": "other"}) is None
     await wait_for(job)
     assert queue.active_for("page", "p1", OPTIONS) is None
+
+
+async def test_duplicate_message_names_the_settings() -> None:
+    translate = FakeTranslate(lambda page, attempt: asyncio.sleep(0.05))
+    queue = make_queue(translate)
+    job = queue.submit("page", "p1", ["p1"], {**OPTIONS, "thinking": True})
+    assert job.duplicate_message() == (
+        "m, thinking on, English is already queued for this page. "
+        "Change a setting to queue another run."
+    )
+    await wait_for(job)

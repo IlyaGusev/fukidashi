@@ -2,7 +2,6 @@ import base64
 import functools
 import json
 import mimetypes
-import os
 import urllib.request
 from collections.abc import Callable
 from io import BytesIO
@@ -12,10 +11,7 @@ import openai
 from openai import AsyncOpenAI
 from PIL import Image, ImageDraw
 
-BASE_URL = "https://api.tokenfactory.nebius.com/v1"
-MODEL = "zai-org/GLM-5.3-Flash"
-LANG = "English"
-MAX_TOKENS = 8192
+from panelogue.settings import settings
 
 PROMPT = """\
 This is a page from a manga or comic ({w}x{h} pixels).
@@ -45,11 +41,10 @@ def no_progress(phase: str, chars: int) -> None:
 
 @functools.cache
 def client() -> AsyncOpenAI:
-    stall = float(os.environ.get("PANELOGUE_STALL_TIMEOUT", "60"))
     return AsyncOpenAI(
-        base_url=BASE_URL,
-        api_key=os.environ["NEBIUS_API_TOKEN"],
-        timeout=openai.Timeout(connect=10, read=stall, write=30, pool=10),
+        base_url=settings.base_url,
+        api_key=settings.nebius_api_token,
+        timeout=openai.Timeout(connect=10, read=settings.stall_timeout, write=30, pool=10),
         max_retries=0,
     )
 
@@ -128,16 +123,30 @@ async def stream_completion(
     return "".join(parts), usage
 
 
+async def stream_with_optional(
+    kwargs: dict[str, Any], optional: dict[str, Any], on_progress: Progress
+) -> tuple[str, dict[str, Any]]:
+    while True:
+        try:
+            return await stream_completion({**kwargs, **optional}, on_progress)
+        except openai.BadRequestError as e:
+            if not optional:
+                raise
+            rejected = [k for k in optional if k in str(e)] or list(optional)
+            for k in rejected:
+                del optional[k]
+
+
 async def detect_bytes(
     data: bytes,
     mime: str,
-    model: str = MODEL,
+    model: str = settings.model,
     thinking: bool = False,
-    lang: str = LANG,
+    lang: str = settings.lang,
     context: list[str] | None = None,
     on_progress: Progress = no_progress,
     effort: str | None = None,
-    max_tokens: int = MAX_TOKENS,
+    max_tokens: int = settings.max_tokens,
 ) -> tuple[Image.Image, dict[str, Any]]:
     img = Image.open(BytesIO(data))
     w, h = img.size
@@ -147,24 +156,19 @@ async def detect_bytes(
         {"type": "image_url", "image_url": {"url": url}},
         {"type": "text", "text": PROMPT.format(w=w, h=h, lang=lang, context=ctx)},
     ]
-    extra_body: dict[str, Any] = {
-        "chat_template_kwargs": {"thinking": thinking, "enable_thinking": thinking}
-    }
-    if effort:
-        extra_body["reasoning_effort"] = effort
     kwargs: dict[str, Any] = {
         "model": model,
         "temperature": 0,
         "max_tokens": max_tokens,
-        "extra_body": extra_body,
+        "extra_body": {"chat_template_kwargs": {"thinking": thinking, "enable_thinking": thinking}},
         "messages": [{"role": "user", "content": content}],
     }
-    try:
-        text, usage = await stream_completion(
-            {**kwargs, "response_format": {"type": "json_object"}}, on_progress
-        )
-    except openai.BadRequestError:
-        text, usage = await stream_completion(kwargs, on_progress)
+    optional: dict[str, Any] = {"response_format": {"type": "json_object"}}
+    if not thinking:
+        optional["reasoning_effort"] = "none"
+    elif effort:
+        optional["reasoning_effort"] = effort
+    text, usage = await stream_with_optional(kwargs, optional, on_progress)
     return img, {
         "bubbles": parse_bubbles(text, w, h),
         "size": [w, h],
@@ -177,7 +181,7 @@ async def detect_bytes(
 
 
 async def detect(
-    src: str, model: str = MODEL, thinking: bool = False, lang: str = LANG
+    src: str, model: str = settings.model, thinking: bool = False, lang: str = settings.lang
 ) -> tuple[Image.Image, dict[str, Any]]:
     data, mime = read_source(src)
     return await detect_bytes(data, mime, model, thinking, lang)

@@ -2,19 +2,18 @@ import asyncio
 import json
 
 import fire
-from dotenv import load_dotenv
 
-from panelogue.detect import LANG, MODEL, detect, draw
+from panelogue.detect import detect, draw
+from panelogue.settings import settings
 
 
 def main(
     image: str,
     draw_to: str | None = None,
-    model: str = MODEL,
+    model: str = settings.model,
     thinking: bool = False,
-    lang: str = LANG,
+    lang: str = settings.lang,
 ) -> None:
-    load_dotenv()
     img, result = asyncio.run(detect(image, model=model, thinking=thinking, lang=lang))
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if draw_to:

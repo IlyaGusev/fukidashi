@@ -2,18 +2,24 @@ import hashlib
 import json
 import mimetypes
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from panelogue.detect import Progress, detect_bytes, no_progress
+from PIL import Image
 
-PAGES = Path("data/pages")
-RESULTS = Path("data/results")
-VOLUMES = Path("data/volumes")
+from panelogue.detect import Progress, detect_bytes, no_progress
+from panelogue.render import render
+from panelogue.settings import settings
+
+PAGES = settings.data_dir / "pages"
+RESULTS = settings.data_dir / "results"
+VOLUMES = settings.data_dir / "volumes"
+RENDERED = settings.data_dir / "rendered"
 
 
 def ensure_dirs() -> None:
-    for d in (PAGES, RESULTS, VOLUMES):
+    for d in (PAGES, RESULTS, VOLUMES, RENDERED):
         d.mkdir(parents=True, exist_ok=True)
 
 
@@ -21,10 +27,14 @@ def safe(name: str) -> str:
     return re.sub(r"[^\w.-]+", "_", name.strip())[:60] or "untitled"
 
 
-def write_json(path: Path, data: Any) -> None:
+def write_atomic(path: Path, write: Callable[[Path], object]) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False))
+    write(tmp)
     tmp.replace(path)
+
+
+def write_json(path: Path, data: Any) -> None:
+    write_atomic(path, lambda tmp: tmp.write_text(json.dumps(data, ensure_ascii=False)))
 
 
 def save_page(data: bytes, filename: str | None, content_type: str | None) -> str:
@@ -50,6 +60,21 @@ def load_result(page: str) -> dict[str, Any] | None:
         return None
     result: dict[str, Any] = json.loads(path.read_text())
     return result
+
+
+def rendered_path(page: str) -> Path:
+    return RENDERED / f"{page}.png"
+
+
+def render_page(page: str) -> Path | None:
+    result = load_result(page)
+    if result is None:
+        return None
+    target = rendered_path(page)
+    if not target.is_file() or target.stat().st_mtime < result_path(page).stat().st_mtime:
+        image = render(Image.open(PAGES / page), result["bubbles"])
+        write_atomic(target, lambda tmp: image.save(tmp, "PNG"))
+    return target
 
 
 def page_info(name: str) -> dict[str, Any]:

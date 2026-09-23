@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Any
 
 import fire
-from dotenv import load_dotenv
 from sacrebleu.metrics.chrf import CHRF
 
-from panelogue.detect import LANG, client, detect_bytes, list_vision_models, read_source
+from panelogue.detect import client, detect_bytes, list_vision_models, read_source
+from panelogue.settings import settings
 
 REPO = "https://raw.githubusercontent.com/mantra-inc/open-mantra-dataset/main/"
 OUT = Path("out/bench")
@@ -100,15 +100,16 @@ async def run_one(run: RunConfig, page: Page, lang: str, sem: asyncio.Semaphore)
     async with sem:
         start = time.monotonic()
         try:
-            _, result = await detect_bytes(
-                data,
-                "image/jpeg",
-                model,
-                thinking=effort != OFF,
-                lang=lang,
-                effort=None if effort == OFF else effort,
-                max_tokens=max_tokens,
-            )
+            async with asyncio.timeout(settings.step_timeout):
+                _, result = await detect_bytes(
+                    data,
+                    "image/jpeg",
+                    model,
+                    thinking=effort != OFF,
+                    lang=lang,
+                    effort=None if effort == OFF else effort,
+                    max_tokens=max_tokens,
+                )
             record: dict[str, Any] = {"result": result}
         except Exception as e:  # noqa: BLE001
             record = {"error": f"{type(e).__name__}: {e}"}
@@ -273,10 +274,9 @@ def main(
     pages_per_book: int = 10,
     max_tokens: int = 65536,
     threshold: float = 0.5,
-    lang: str = LANG,
+    lang: str = settings.lang,
     concurrency: int = 6,
 ) -> None:
-    load_dotenv()
     pages = load_pages(as_list(books), pages_per_book)
     runs = asyncio.run(
         run_all(as_list(models), as_list(efforts) or [OFF], max_tokens, pages, lang, concurrency)
