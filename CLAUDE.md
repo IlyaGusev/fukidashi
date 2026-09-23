@@ -16,3 +16,24 @@
 - Do not write code comments. Make the code explain itself: use clear names and
   extract named helpers. Keep only tool directives (`# noqa`, `# type:`,
   `# pragma`). Do not add a docstring that only repeats the code.
+
+## Project
+
+Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` as
+`NEBIUS_API_TOKEN`.
+
+- `src/panelogue/detect.py`: VLM detection + translation of text boxes.
+- `src/panelogue/web.py`: FastAPI app, page/volume storage under `data/`.
+- `src/panelogue/static/index.html`: the UI.
+- `scripts/serve.py`: runs the app on http://localhost:8083. `scripts/detect_bubbles.py`: CLI.
+
+## Server restarts
+
+The app is served through ngrok. ngrok keeps an open connection to port 8083, so killing
+every process on the port also kills ngrok. Restart only the listener:
+
+```
+kill $(lsof -t -sTCP:LISTEN -i :8083); (setsid nohup uv run scripts/serve.py > out/serve.log 2>&1 &)
+```
+
+Never use `kill $(lsof -t -i :8083)` or `pkill -f` patterns that match ngrok.

@@ -11,15 +11,21 @@ from PIL import Image, ImageDraw
 
 BASE_URL = "https://api.tokenfactory.nebius.com/v1"
 MODEL = "zai-org/GLM-5.3-Flash"
+LANG = "English"
 
 PROMPT = """\
 This is a page from a manga or comic ({w}x{h} pixels).
 Find every text container: speech bubbles, thought bubbles, narration boxes and sound effects.
-For each one return its bounding box in pixel coordinates and the text inside it, transcribed exactly in the original language.
+For each one return its bounding box in pixel coordinates, the text inside it transcribed exactly in the original language, and a natural translation into {lang}.
 Reading order: right-to-left, top-to-bottom for manga; left-to-right for western comics.
-
+{context}
 Answer with JSON only, no prose, in this shape:
-{{"bubbles": [{{"bbox": [x1, y1, x2, y2], "kind": "speech|thought|narration|sfx", "text": "..."}}]}}
+{{"bubbles": [{{"bbox": [x1, y1, x2, y2], "kind": "speech|thought|narration|sfx", "text": "...", "translation": "..."}}]}}
+"""
+
+CONTEXT = """
+Text from the previous page, for consistent names, terms and tone:
+{lines}
 """
 
 
@@ -47,20 +53,28 @@ def parse_json(text: str) -> dict:
     return json.loads(text)
 
 
-def detect_bytes(data: bytes, mime: str, model: str = MODEL, thinking: bool = False) -> tuple[Image.Image, dict]:
+def detect_bytes(
+    data: bytes,
+    mime: str,
+    model: str = MODEL,
+    thinking: bool = False,
+    lang: str = LANG,
+    context: list[str] | None = None,
+) -> tuple[Image.Image, dict]:
     img = Image.open(BytesIO(data))
     w, h = img.size
     url = f"data:{mime};base64,{base64.b64encode(data).decode()}"
+    ctx = CONTEXT.format(lines="\n".join(f"- {t}" for t in context)) if context else ""
     kwargs = dict(
         model=model,
         temperature=0,
-        max_tokens=65536,
+        max_tokens=8192,
         extra_body={"chat_template_kwargs": {"enable_thinking": thinking}},
         messages=[{
             "role": "user",
             "content": [
                 {"type": "image_url", "image_url": {"url": url}},
-                {"type": "text", "text": PROMPT.format(w=w, h=h)},
+                {"type": "text", "text": PROMPT.format(w=w, h=h, lang=lang, context=ctx)},
             ],
         }],
     )
@@ -72,16 +86,18 @@ def detect_bytes(data: bytes, mime: str, model: str = MODEL, thinking: bool = Fa
     for b in result["bubbles"]:
         x1, y1, x2, y2 = b["bbox"]
         b["bbox"] = [max(0, min(w, x1)), max(0, min(h, y1)), max(0, min(w, x2)), max(0, min(h, y2))]
+        b.setdefault("translation", "")
     result["size"] = [w, h]
     result["model"] = model
     result["thinking"] = thinking
+    result["lang"] = lang
     result["usage"] = resp.usage.model_dump(exclude_none=True)
     return img, result
 
 
-def detect(src: str, model: str = MODEL, thinking: bool = False) -> tuple[Image.Image, dict]:
+def detect(src: str, model: str = MODEL, thinking: bool = False, lang: str = LANG) -> tuple[Image.Image, dict]:
     data, mime = read_source(src)
-    return detect_bytes(data, mime, model, thinking)
+    return detect_bytes(data, mime, model, thinking, lang)
 
 
 def draw(img: Image.Image, result: dict, out: str) -> None:
