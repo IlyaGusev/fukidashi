@@ -5,16 +5,20 @@ import re
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
 from panelogue.detect import Progress, detect_bytes, no_progress
+from panelogue.render import render
 from panelogue.settings import settings
 
 PAGES = settings.data_dir / "pages"
 RESULTS = settings.data_dir / "results"
 VOLUMES = settings.data_dir / "volumes"
+RENDERED = settings.data_dir / "rendered"
 
 
 def ensure_dirs() -> None:
-    for d in (PAGES, RESULTS, VOLUMES):
+    for d in (PAGES, RESULTS, VOLUMES, RENDERED):
         d.mkdir(parents=True, exist_ok=True)
 
 
@@ -51,6 +55,23 @@ def load_result(page: str) -> dict[str, Any] | None:
         return None
     result: dict[str, Any] = json.loads(path.read_text())
     return result
+
+
+def rendered_path(page: str) -> Path:
+    return RENDERED / f"{page}.png"
+
+
+def render_page(page: str) -> Path | None:
+    source, target = result_path(page), rendered_path(page)
+    if not source.is_file():
+        return None
+    if not target.is_file() or target.stat().st_mtime < source.stat().st_mtime:
+        result = json.loads(source.read_text())
+        image = render(Image.open(PAGES / page), result["bubbles"])
+        tmp = target.with_suffix(".tmp.png")
+        image.save(tmp)
+        tmp.replace(target)
+    return target
 
 
 def page_info(name: str) -> dict[str, Any]:

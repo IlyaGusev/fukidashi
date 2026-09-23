@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
@@ -90,6 +90,14 @@ async def result(page: str) -> JSONResponse:
     if found is None:
         raise HTTPException(404, "no cached result")
     return JSONResponse(found)
+
+
+@app.get("/pages/{page}/rendered")
+async def rendered(page: str) -> FileResponse:
+    path = await run_in_threadpool(store.render_page, page_name(page))
+    if path is None:
+        raise HTTPException(404, "no cached result")
+    return FileResponse(path, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/volumes")
