@@ -1,18 +1,17 @@
 import asyncio
-import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from fukidashi import store
 from fukidashi.detect import list_vision_models, read_source
-from fukidashi.jobs import Job, JobQueue
+from fukidashi.jobs import ACTIVE, Duplicate, JobQueue, job_options
 from fukidashi.settings import settings
 
 STATIC = Path(__file__).parent / "static"
@@ -35,6 +34,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(lifespan=lifespan)
 app.mount("/pages/files", StaticFiles(directory=store.PAGES), name="pages")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+@app.exception_handler(Duplicate)
+async def duplicate_job(request: Request, exc: Duplicate) -> JSONResponse:
+    return JSONResponse({"detail": str(exc)}, status_code=409)
+
+
 SAMPLE_URL = "https://raw.githubusercontent.com/mantra-inc/open-mantra-dataset/main/images/{book}/ja/{page:03d}.jpg"
 SAMPLES = {
     "tojime_no_siora": 46,
@@ -59,8 +65,8 @@ def load_volume(name: str) -> dict[str, Any]:
     return vol
 
 
-def find_job(job_id: str) -> Job:
-    job = queue.jobs.get(job_id)
+def find_job(job_id: str) -> dict[str, Any]:
+    job = queue.get(job_id)
     if not job:
         raise HTTPException(404, "unknown job")
     return job
@@ -165,7 +171,7 @@ async def add_pages(name: str, images: list[UploadFile] = File(...)) -> dict[str
 
 @app.get("/jobs")
 async def jobs() -> dict[str, Any]:
-    return {"jobs": [j.to_dict() for j in queue.jobs.values()]}
+    return {"jobs": queue.list_jobs()}
 
 
 @app.post("/jobs")
@@ -187,34 +193,20 @@ async def create_job(
             raise HTTPException(400, "volume has no pages")
     else:
         raise HTTPException(400, "kind must be page or volume")
-    options = {"model": model, "thinking": thinking, "lang": lang}
-    if duplicate := queue.active_for(kind, name, options):
-        raise HTTPException(409, duplicate.duplicate_message())
-    return queue.submit(kind, name, pages, options).to_dict()
+    return queue.submit(kind, name, pages, {"model": model, "thinking": thinking, "lang": lang})
 
 
 @app.post("/jobs/{job_id}/cancel")
 async def cancel_job(job_id: str) -> dict[str, Any]:
-    job = find_job(job_id)
-    queue.cancel(job)
-    return job.to_dict()
+    find_job(job_id)
+    queue.cancel(job_id)
+    return find_job(job_id)
 
 
 @app.post("/jobs/{job_id}/retry")
 async def retry_job(job_id: str) -> dict[str, Any]:
     job = find_job(job_id)
-    if job.active or not job.unfinished_pages:
+    pages = [s["page"] for s in job["steps"] if s["state"] != "done"]
+    if job["state"] in ACTIVE or not pages:
         raise HTTPException(400, "nothing to retry")
-    if duplicate := queue.active_for(job.kind, job.name, job.options):
-        raise HTTPException(409, duplicate.duplicate_message())
-    return queue.retry(job).to_dict()
-
-
-@app.get("/events")
-async def events() -> StreamingResponse:
-    async def stream() -> AsyncIterator[str]:
-        async for event in queue.subscribe():
-            yield f"data: {json.dumps(event)}\n\n"
-
-    headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-    return StreamingResponse(stream(), media_type="text/event-stream", headers=headers)
+    return queue.submit(job["kind"], job["name"], pages, job_options(job))
