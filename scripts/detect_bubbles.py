@@ -3,8 +3,8 @@ import json
 
 import fire
 
-from panelogue.detect import detect, draw
-from panelogue.settings import settings
+from fukidashi.detect import detect, draw
+from fukidashi.settings import settings
 
 
 def main(

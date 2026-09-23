@@ -11,7 +11,7 @@ import openai
 from openai import AsyncOpenAI
 from PIL import Image, ImageDraw
 
-from panelogue.settings import settings
+from fukidashi.settings import settings
 
 PROMPT = """\
 This is a page from a manga or comic ({w}x{h} pixels).

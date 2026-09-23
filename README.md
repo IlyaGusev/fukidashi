@@ -1,3 +1,7 @@
+<img src="logo.png" alt="Fukidashi" width="160">
+
+# Fukidashi
+
 Link:  https://6bb6943559f8.ngrok.app
 
 Samples: https://github.com/mantra-inc/open-mantra-dataset/tree/main/images
@@ -18,7 +22,7 @@ uv run scripts/benchmark.py --threshold 0.2           # rescore cached runs with
 Every model runs with thinking off. Models that the Nebius catalog marks as reasoning also run
 with `reasoning_effort` low and medium. Raw model output caches under `out/bench/runs/`, so a
 rerun only calls the API for missing pages and rescoring is free. Each call is capped at
-`PANELOGUE_STEP_TIMEOUT` (600 s), the same cap the app uses.
+`FUKIDASHI_STEP_TIMEOUT` (600 s), the same cap the app uses.
 
 Metrics, printed twice: once with predicted boxes matched to gold boxes by IoU, once matched by
 similarity of the transcribed Japanese.
