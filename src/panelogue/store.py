@@ -6,10 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from panelogue.detect import Progress, detect_bytes, no_progress
+from panelogue.settings import settings
 
-PAGES = Path("data/pages")
-RESULTS = Path("data/results")
-VOLUMES = Path("data/volumes")
+PAGES = settings.data_dir / "pages"
+RESULTS = settings.data_dir / "results"
+VOLUMES = settings.data_dir / "volumes"
 
 
 def ensure_dirs() -> None:

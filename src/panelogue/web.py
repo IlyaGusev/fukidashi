@@ -1,28 +1,26 @@
 import asyncio
 import json
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from panelogue import store
-from panelogue.detect import LANG, MODEL, list_vision_models, read_source
+from panelogue.detect import list_vision_models, read_source
 from panelogue.jobs import Job, JobQueue
+from panelogue.settings import settings
 
-load_dotenv()
 INDEX = (Path(__file__).parent / "static" / "index.html").read_text()
 store.ensure_dirs()
 queue = JobQueue(
-    concurrency=int(os.environ.get("PANELOGUE_WORKERS", "2")),
-    attempts=int(os.environ.get("PANELOGUE_ATTEMPTS", "3")),
-    step_timeout=float(os.environ.get("PANELOGUE_STEP_TIMEOUT", "600")),
+    concurrency=settings.workers,
+    attempts=settings.attempts,
+    step_timeout=settings.step_timeout,
 )
 
 
@@ -73,7 +71,7 @@ async def index() -> str:
 
 @app.get("/models")
 async def models() -> dict[str, Any]:
-    return {"models": await list_vision_models(), "default": MODEL, "lang": LANG}
+    return {"models": await list_vision_models(), "default": settings.model, "lang": settings.lang}
 
 
 @app.get("/pages")
@@ -157,9 +155,9 @@ async def jobs() -> dict[str, Any]:
 async def create_job(
     kind: str = Form(...),
     name: str = Form(...),
-    model: str = Form(MODEL),
+    model: str = Form(settings.model),
     thinking: bool = Form(False),
-    lang: str = Form(LANG),
+    lang: str = Form(settings.lang),
 ) -> dict[str, Any]:
     if kind == "page":
         name = page_name(name)

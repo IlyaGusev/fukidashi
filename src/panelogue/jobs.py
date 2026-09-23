@@ -4,15 +4,15 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
 from typing import Any
 
 import openai
 
 from panelogue.detect import BadOutput, Progress
+from panelogue.settings import settings
 from panelogue.store import translate_page, write_json
 
-JOBS = Path("data/jobs")
+JOBS = settings.data_dir / "jobs"
 ACTIVE = ("queued", "running")
 RETRYABLE = (
     BadOutput,

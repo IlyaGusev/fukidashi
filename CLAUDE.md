@@ -22,6 +22,9 @@
 Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` as
 `NEBIUS_API_TOKEN`.
 
+- `src/panelogue/settings.py`: every setting with its default, via pydantic-settings. Env vars
+  are `PANELOGUE_<FIELD>` plus `NEBIUS_API_TOKEN`; `.env` loads through it, nothing else reads
+  the environment.
 - `src/panelogue/detect.py`: VLM detection + translation of text boxes (async, streamed).
   Malformed model answers raise `BadOutput`. The client has no SDK retries and a per-read
   stall timeout (`PANELOGUE_STALL_TIMEOUT`, default 60s).
