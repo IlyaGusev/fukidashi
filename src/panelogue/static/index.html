@@ -184,8 +184,8 @@ const drop = $("drop"), img = $("img"), stage = $("stage"), list = $("list"), ra
       typeset = $("typeset");
 const COLORS = { speech: "var(--speech)", thought: "var(--thought)", narration: "var(--narration)", sfx: "var(--sfx)" };
 const ACTIVE = ["queued", "running"];
-let tab = "page", current = null, result = null, volume = null, jobs = [], lastPayload = "", pollTimer = 0, notice = null;
-const stepStates = new Map();
+let tab = "page", current = null, result = null, volume = null, jobs = [], pollTimer = 0, notice = null, shownFinished = null;
+let stepIndex = new Map();
 
 fetch("/models").then(r => r.json()).then(d => {
   for (const m of d.models) model.add(new Option(m, m, false, m === d.default));
@@ -205,10 +205,16 @@ const isActive = job => ACTIVE.includes(job.state);
 const count = (job, state) => job.steps.filter(s => s.state === state).length;
 const tokens = job => job.steps.reduce((n, s) => n + (s.tokens || 0), 0);
 const canRetry = job => !isActive(job) && job.steps.some(s => s.state !== "done");
+const percentDone = job => 100 * job.steps.filter(s => s.finished).length / job.steps.length;
 
 function setStatus(text, opts = {}) {
   status.className = opts.error ? "error" : "";
   status.innerHTML = (opts.busy ? '<span class="spinner"></span>' : "") + esc(text);
+}
+
+function note(text, opts = {}) {
+  notice = text ? { text, ...opts, until: opts.error ? Date.now() + 8000 : null } : null;
+  renderStatus();
 }
 
 function clear() {
@@ -276,6 +282,7 @@ async function select(p) {
   stage.style.display = "block";
   clear();
   document.querySelectorAll(".thumb").forEach(t => t.classList.toggle("active", t.dataset.page === p));
+  shownFinished = stepOf(p)?.step.finished ?? null;
   const r = await fetch(`/results/${encodeURIComponent(p)}`);
   if (r.ok && current === p) show(await r.json());
   renderAll();
@@ -292,9 +299,10 @@ async function refreshGallery() {
 
 async function upload(f) {
   if (!f || !f.type.startsWith("image/")) return;
-  setStatus("Uploading…", { busy: true });
+  note("Uploading…", { busy: true });
   const d = await (await fetch("/pages", { method: "POST", body: form({ image: f }) })).json();
   await refreshGallery();
+  note(null);
   select(d.page);
 }
 
@@ -309,7 +317,7 @@ document.addEventListener("paste", e => { const f = [...e.clipboardData.files][0
 async function post(url, body) {
   const r = await fetch(url, { method: "POST", body });
   const d = await r.json();
-  if (d.detail) notice = d.detail;
+  if (d.detail) note(d.detail, { error: true });
   await poll();
   return d;
 }
@@ -352,16 +360,16 @@ $("volsel").onchange = () => {
 };
 
 async function importSample(book) {
-  setStatus(`Downloading ${book} from OpenMantra…`, { busy: true });
+  note(`Downloading ${book} from OpenMantra…`, { busy: true });
   $("volsel").disabled = true;
   try {
     const d = await (await fetch(`/samples/${encodeURIComponent(book)}`, { method: "POST" })).json();
     if (d.detail) throw new Error(d.detail);
+    note(null);
     setVolume(d);
     await refreshVolumes();
-    setStatus(`${d.pages.length} pages in ${d.name}`);
   } catch (err) {
-    setStatus(err.message, { error: true });
+    note(err.message, { error: true });
   } finally {
     $("volsel").disabled = false;
   }
@@ -379,13 +387,15 @@ $("voltranslate").onclick = () => submit("volume", volume.name);
 $("volcancel").onclick = () => { const j = activeJob("volume", volume?.name); if (j) cancelJob(j.id); };
 
 async function addPages(files) {
-  if (!volume) return setStatus("Create or pick a volume first.", { error: true });
+  if (!volume) return note("Create or pick a volume first.", { error: true });
   const fd = new FormData();
   [...files].filter(f => f.type.startsWith("image/")).forEach(f => fd.append("images", f));
   const n = fd.getAll("images").length;
   if (!n) return;
-  setStatus(`Uploading ${n} pages…`, { busy: true });
-  setVolume(await (await fetch(`/volumes/${encodeURIComponent(volume.name)}/pages`, { method: "POST", body: fd })).json());
+  note(`Uploading ${n} pages…`, { busy: true });
+  const v = await (await fetch(`/volumes/${encodeURIComponent(volume.name)}/pages`, { method: "POST", body: fd })).json();
+  note(null);
+  setVolume(v);
 }
 
 async function loadVolume(name) {
@@ -411,43 +421,22 @@ function setVolume(v) {
 
 async function poll() {
   try {
-    const text = await (await fetch("/jobs")).text();
-    if (text !== lastPayload) {
-      lastPayload = text;
-      jobs = JSON.parse(text).jobs;
-      onJobs();
-      renderAll();
-    }
+    jobs = (await (await fetch("/jobs")).json()).jobs;
+    stepIndex = new Map();
+    for (const job of jobs) for (const step of job.steps) if (!stepIndex.has(step.page)) stepIndex.set(step.page, { job, step });
+    const done = stepOf(current)?.step;
+    if (done?.state === "done" && done.finished !== shownFinished) select(current);
   } catch (err) {
-    notice = `Server unreachable: ${err.message}`;
-    renderStatus();
+    note(`Server unreachable: ${err.message}`, { error: true });
   }
+  renderAll();
   clearTimeout(pollTimer);
   pollTimer = setTimeout(poll, jobs.some(isActive) ? 1000 : 5000);
 }
 
-function onJobs() {
-  let reload = false, finished = false;
-  for (const j of jobs) j.steps.forEach((s, i) => {
-    const key = `${j.id}:${i}`, was = stepStates.get(key);
-    stepStates.set(key, s.state);
-    if (was === undefined || was === s.state || s.state !== "done") return;
-    finished = true;
-    if (s.page === current) reload = true;
-  });
-  if (reload) select(current);
-  else if (finished) refreshGallery();
-}
-
 const latest = (kind, name) => jobs.find(j => j.kind === kind && j.name === name);
 const activeJob = (kind, name) => { const j = latest(kind, name); return j && isActive(j) ? j : null; };
-function stepOf(page) {
-  for (const j of jobs) {
-    const s = j.steps.find(s => s.page === page);
-    if (s) return { job: j, step: s };
-  }
-  return null;
-}
+const stepOf = page => stepIndex.get(page);
 
 function describeStep(s) {
   const progress = s.phase ? `${s.phase} · ${kilo(s.chars)} chars` : "waiting for model";
@@ -470,20 +459,20 @@ function describe(job) {
   return parts.join(" · ");
 }
 
-function jobRow(job) {
+function jobRow({ id, kind, name }) {
   const el = document.createElement("div");
-  el.dataset.id = job.id;
-  el.innerHTML = `<div class="row"><span class="kind">${job.kind}</span><span class="name"></span><span class="state"></span>
+  el.dataset.id = id;
+  el.innerHTML = `<div class="row"><span class="kind">${kind}</span><span class="name"></span><span class="state"></span>
     <button class="x" title="Cancel">×</button><button class="retry" title="Retry unfinished pages">↻</button></div>
     <div class="bar"><i></i></div><div class="sub"></div>`;
-  const name = el.querySelector(".name");
-  name.textContent = job.kind === "page" ? short(job.name) : job.name;
-  name.title = job.name;
-  el.querySelector(".x").onclick = e => { e.stopPropagation(); cancelJob(job.id); };
-  el.querySelector(".retry").onclick = e => { e.stopPropagation(); retryJob(job.id); };
+  const label = el.querySelector(".name");
+  label.textContent = kind === "page" ? short(name) : name;
+  label.title = name;
+  el.querySelector(".x").onclick = e => { e.stopPropagation(); cancelJob(id); };
+  el.querySelector(".retry").onclick = e => { e.stopPropagation(); retryJob(id); };
   el.onclick = () => {
-    if (job.kind === "volume") { if (tab !== "volume") switchTab("volume"); loadVolume(job.name); }
-    else { if (tab !== "page") switchTab("page"); select(job.name); }
+    if (kind === "volume") { if (tab !== "volume") switchTab("volume"); loadVolume(name); }
+    else { if (tab !== "page") switchTab("page"); select(name); }
   };
   return el;
 }
@@ -498,10 +487,9 @@ function renderQueue() {
     if (q.children[i] !== el) q.insertBefore(el, q.children[i] || null);
     el.className = `job ${job.state}`;
     el.querySelector(".state").textContent = job.state;
-    el.querySelector(".x").hidden = !isActive(job);
-    el.querySelector(".retry").hidden = !canRetry(job);
-    const finished = job.steps.filter(s => s.finished).length;
-    el.querySelector(".bar i").style.width = `${isActive(job) ? 100 * finished / job.steps.length : 100}%`;
+    el.querySelector(".x").classList.toggle("hidden", !isActive(job));
+    el.querySelector(".retry").classList.toggle("hidden", !canRetry(job));
+    el.querySelector(".bar i").style.width = `${isActive(job) ? percentDone(job) : 100}%`;
     el.querySelector(".sub").textContent = `${job.model} · ${describe(job)}`;
   });
 }
@@ -512,6 +500,7 @@ function renderThumbs() {
     t.classList.toggle("queued", s?.state === "queued");
     t.classList.toggle("busy", s?.state === "running");
     t.classList.toggle("failed", s?.state === "failed");
+    if (s?.state === "done") t.classList.add("cached");
   });
 }
 
@@ -521,13 +510,13 @@ function renderVolume() {
   $("volcancel").classList.toggle("hidden", !(job && isActive(job)));
   const bar = $("progress");
   bar.classList.toggle("failed", !!job && count(job, "failed") > 0);
-  bar.firstElementChild.style.width = job ? `${100 * job.steps.filter(s => s.finished).length / job.steps.length}%` : 0;
+  bar.firstElementChild.style.width = job ? `${percentDone(job)}%` : 0;
 }
 
 function renderStatus() {
   go.disabled = !current;
   cancel.classList.toggle("hidden", !(current && activeJob("page", current)));
-  if (notice) return setStatus(notice, { error: true });
+  if (notice && !(notice.until && Date.now() > notice.until)) return setStatus(notice.text, notice);
   if (tab === "volume") {
     if (!volume) return setStatus("Pick or create a volume.");
     const job = latest("volume", volume.name);
@@ -551,9 +540,7 @@ function renderStatus() {
 }
 
 function renderAll() { renderQueue(); renderThumbs(); renderVolume(); renderStatus(); }
-setInterval(() => { if (jobs.some(isActive)) renderAll(); }, 1000);
 
-document.addEventListener("click", () => { notice = null; }, true);
 refreshGallery();
 poll();
 window.addEventListener("resize", render);

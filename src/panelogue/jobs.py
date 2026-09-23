@@ -13,6 +13,7 @@ from panelogue.settings import settings
 from panelogue.store import translate_page
 
 ACTIVE = ("queued", "running")
+ACTIVE_SQL = "(" + ", ".join(f"'{s}'" for s in ACTIVE) + ")"
 RETRYABLE = (
     BadOutput,
     TimeoutError,
@@ -39,17 +40,20 @@ WHERE (job, position) = (
     WHERE s.state = 'queued' ORDER BY j.kind = 'volume', j.created, s.position LIMIT 1)
 RETURNING job, position, page
 """
-FINISH_JOB = """
+FINISH_JOB = f"""
 UPDATE jobs SET finished = ?, state = CASE
     WHEN EXISTS (SELECT 1 FROM steps WHERE job = jobs.id AND state = 'failed') THEN 'failed'
     ELSE 'done' END
 WHERE id = ? AND state = 'running'
-  AND NOT EXISTS (SELECT 1 FROM steps WHERE job = jobs.id AND state IN ('queued', 'running'))
+  AND NOT EXISTS (SELECT 1 FROM steps WHERE job = jobs.id AND state IN {ACTIVE_SQL})
 """
-STEP_FIELDS = ("page", "state", "attempts", "started", "finished", "boxes", "tokens", "error")
 
 Translate = Callable[[str, dict[str, Any], str | None, Progress], Awaitable[dict[str, Any]]]
 StepKey = tuple[str, int]
+
+
+class Duplicate(Exception):
+    pass
 
 
 def job_options(job: dict[str, Any]) -> dict[str, Any]:
@@ -90,14 +94,15 @@ class JobQueue:
         self._db = sqlite3.connect(self._db_path, isolation_level=None)
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode = WAL")
+        self._db.execute("PRAGMA synchronous = NORMAL")
         self._db.executescript(SCHEMA)
         self._db.execute("UPDATE steps SET state = 'queued' WHERE state = 'running'")
         self._workers = [asyncio.create_task(self._work()) for _ in range(self._concurrency)]
         self._wake.set()
 
     async def stop(self) -> None:
-        for worker in self._workers:
-            worker.cancel()
+        for task in [*self._workers, *self._running.values()]:
+            task.cancel()
         await asyncio.gather(*self._workers, return_exceptions=True)
         self._db.close()
 
@@ -111,52 +116,44 @@ class JobQueue:
 
     def active_for(self, kind: str, name: str, options: dict[str, Any]) -> dict[str, Any] | None:
         row = self._db.execute(
-            "SELECT * FROM jobs WHERE kind = ? AND name = ? AND model = ? AND thinking = ? "
-            "AND lang = ? AND state IN ('queued', 'running')",
-            (kind, name, options["model"], options["thinking"], options["lang"]),
+            "SELECT * FROM jobs WHERE kind = :kind AND name = :name AND model = :model "
+            f"AND thinking = :thinking AND lang = :lang AND state IN {ACTIVE_SQL}",
+            {"kind": kind, "name": name, **options},
         ).fetchone()
         return self._with_steps(dict(row)) if row else None
 
     def submit(
         self, kind: str, name: str, pages: list[str], options: dict[str, Any]
     ) -> dict[str, Any]:
+        if duplicate := self.active_for(kind, name, options):
+            raise Duplicate(duplicate_message(duplicate))
         job_id = uuid.uuid4().hex[:12]
+        self._db.execute("BEGIN")
         self._db.execute(
             "INSERT INTO jobs (id, kind, name, model, thinking, lang, created) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                job_id,
-                kind,
-                name,
-                options["model"],
-                options["thinking"],
-                options["lang"],
-                time.time(),
-            ),
+            "VALUES (:id, :kind, :name, :model, :thinking, :lang, :created)",
+            {"id": job_id, "kind": kind, "name": name, "created": time.time(), **options},
         )
         self._db.executemany(
             "INSERT INTO steps (job, position, page) VALUES (?, ?, ?)",
             [(job_id, i, p) for i, p in enumerate(pages)],
         )
+        self._db.execute("COMMIT")
         self._wake.set()
         job = self.get(job_id)
         assert job is not None
         return job
 
-    def retry(self, job: dict[str, Any]) -> dict[str, Any]:
-        pages = [s["page"] for s in job["steps"] if s["state"] != "done"]
-        return self.submit(job["kind"], job["name"], pages, job_options(job))
-
     def cancel(self, job_id: str) -> None:
         now = time.time()
         self._db.execute(
-            "UPDATE steps SET state = 'cancelled', finished = ? "
-            "WHERE job = ? AND state IN ('queued', 'running')",
+            f"UPDATE steps SET state = 'cancelled', finished = ? "
+            f"WHERE job = ? AND state IN {ACTIVE_SQL}",
             (now, job_id),
         )
         self._db.execute(
-            "UPDATE jobs SET state = 'cancelled', finished = ? "
-            "WHERE id = ? AND state IN ('queued', 'running')",
+            f"UPDATE jobs SET state = 'cancelled', finished = ? "
+            f"WHERE id = ? AND state IN {ACTIVE_SQL}",
             (now, job_id),
         )
         for (job, _), task in list(self._running.items()):
@@ -168,7 +165,7 @@ class JobQueue:
         steps = []
         for r in rows:
             phase, chars = self._progress.get((job["id"], r["position"]), (None, 0))
-            steps.append({**{k: r[k] for k in STEP_FIELDS}, "phase": phase, "chars": chars})
+            steps.append({**dict(r), "phase": phase, "chars": chars})
         return {**job, "thinking": bool(job["thinking"]), "steps": steps}
 
     async def _work(self) -> None:
@@ -194,24 +191,19 @@ class JobQueue:
         task = asyncio.create_task(self._attempt(key, page))
         self._running[key] = task
         try:
-            result = await task
-        except asyncio.CancelledError:
-            if asyncio.current_task().cancelling():  # type: ignore[union-attr]
-                raise
-            return
+            await asyncio.wait({task})
         finally:
             self._running.pop(key, None)
             self._progress.pop(key, None)
-        self._end(key, result)
+        if not task.cancelled():
+            self._end(key, task.result())
 
     async def _attempt(self, key: StepKey, page: str) -> dict[str, Any] | None:
         job_id, position = key
-        job = self._db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
-        previous = self._db.execute(
-            "SELECT page FROM steps WHERE job = ? AND position = ?", (job_id, position - 1)
-        ).fetchone()
-        options = job_options(dict(job))
-        previous_page = previous["page"] if previous else None
+        job = self.get(job_id)
+        assert job is not None
+        options = job_options(job)
+        previous_page = job["steps"][position - 1]["page"] if position else None
         for attempt in range(1, self._attempts + 1):
             self._update_step(key, attempts=attempt)
             try:
@@ -242,7 +234,7 @@ class JobQueue:
     def _update_step(self, key: StepKey, **fields: Any) -> None:
         assignments = ", ".join(f"{k} = ?" for k in fields)
         self._db.execute(
-            f"UPDATE steps SET {assignments} WHERE job = ? AND position = ?",
+            f"UPDATE steps SET {assignments} WHERE job = ? AND position = ? AND state = 'running'",
             (*fields.values(), *key),
         )
 
