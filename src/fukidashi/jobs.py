@@ -8,9 +8,9 @@ from typing import Any
 
 import openai
 
-from panelogue.detect import BadOutput, Progress
-from panelogue.settings import settings
-from panelogue.store import translate_page, write_json
+from fukidashi.detect import BadOutput, Progress
+from fukidashi.settings import settings
+from fukidashi.store import translate_page, write_json
 
 JOBS = settings.data_dir / "jobs"
 ACTIVE = ("queued", "running")

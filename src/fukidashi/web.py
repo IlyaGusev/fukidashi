@@ -10,12 +10,13 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from panelogue import store
-from panelogue.detect import list_vision_models, read_source
-from panelogue.jobs import Job, JobQueue
-from panelogue.settings import settings
+from fukidashi import store
+from fukidashi.detect import list_vision_models, read_source
+from fukidashi.jobs import Job, JobQueue
+from fukidashi.settings import settings
 
-INDEX = (Path(__file__).parent / "static" / "index.html").read_text()
+STATIC = Path(__file__).parent / "static"
+INDEX = (STATIC / "index.html").read_text()
 store.ensure_dirs()
 queue = JobQueue(
     concurrency=settings.workers,
@@ -33,6 +34,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/pages/files", StaticFiles(directory=store.PAGES), name="pages")
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
 SAMPLE_URL = "https://raw.githubusercontent.com/mantra-inc/open-mantra-dataset/main/images/{book}/ja/{page:03d}.jpg"
 SAMPLES = {
     "tojime_no_siora": 46,

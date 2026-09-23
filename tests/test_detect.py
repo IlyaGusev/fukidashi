@@ -4,8 +4,8 @@ import httpx2 as httpx
 import openai
 import pytest
 
-from panelogue import detect
-from panelogue.detect import no_progress, stream_with_optional
+from fukidashi import detect
+from fukidashi.detect import no_progress, stream_with_optional
 
 
 def bad_request(message: str) -> openai.BadRequestError:

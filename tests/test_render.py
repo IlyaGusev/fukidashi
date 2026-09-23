@@ -1,7 +1,7 @@
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from panelogue.render import FONT, ink_mask, place, render
+from fukidashi.render import FONT, ink_mask, place, render
 
 BUBBLE = (100, 100, 300, 400)
 TEXT = (150, 200, 260, 230)
