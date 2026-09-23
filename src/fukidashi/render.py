@@ -19,7 +19,6 @@ MAX_FONT = 60
 LINE_SPACING = 1.1
 EXPAND = 1.0
 CENTER = -1 / 3
-INSET = -0.12
 MIN_FILL = 0.2
 MAX_FILL = 3.0
 
@@ -63,6 +62,36 @@ def bubble_interior(crop: Mask, box: Rect) -> Mask | None:
     return filled
 
 
+def run_through(line: NDArray[np.bool_], at: int) -> tuple[int, int]:
+    gaps = np.flatnonzero(~line)
+    start = gaps[gaps < at].max(initial=-1) + 1
+    stop = gaps[gaps > at].min(initial=len(line))
+    return int(start), int(stop)
+
+
+def inscribed_rect(mask: Mask, px: int, py: int) -> Rect:
+    paper = mask.astype(bool)
+    ys, xs = np.nonzero(paper)
+    if len(ys) == 0:
+        return (px, py, px, py)
+    nearest = int(((ys - py) ** 2 + (xs - px) ** 2).argmin())
+    px, py = int(xs[nearest]), int(ys[nearest])
+    cols = np.arange(paper.shape[1])
+    left = np.where(~paper[:, : px + 1], cols[: px + 1], -1).max(axis=1) + 1
+    right = np.where(~paper[:, px:], cols[px:], len(cols)).min(axis=1)
+    first, stop = run_through(paper[:, px], py)
+    best, best_area = (px, py, px, py), 0
+    for top in range(first, py + 1):
+        lefts = np.maximum.accumulate(left[top:stop])
+        rights = np.minimum.accumulate(right[top:stop])
+        area = (rights - lefts) * np.arange(1, stop - top + 1)
+        area[: py - top] = 0
+        i = int(area.argmax())
+        if area[i] > best_area:
+            best, best_area = (int(lefts[i]), top, int(rights[i]), top + i + 1), int(area[i])
+    return best
+
+
 def place(gray: Mask, inside: Mask, bbox: Rect) -> Rect:
     height, width = gray.shape
     x1, y1, x2, y2 = scale(bbox, EXPAND, width, height)
@@ -73,8 +102,8 @@ def place(gray: Mask, inside: Mask, bbox: Rect) -> Rect:
         interior[box[1] : box[3], box[0] : box[2]] = 1
     interior = cv2.erode(interior, disk(OUTLINE_MARGIN)).astype(np.uint8)
     inside[y1:y2, x1:x2] |= interior
-    x, y, w, h = cv2.boundingRect(interior)
-    return scale((x1 + x, y1 + y, x1 + x + w, y1 + y + h), INSET, width, height)
+    rect = inscribed_rect(interior, (box[0] + box[2]) // 2, (box[1] + box[3]) // 2)
+    return (x1 + rect[0], y1 + rect[1], x1 + rect[2], y1 + rect[3])
 
 
 def ink_mask(gray: Mask, inside: Mask) -> Mask:
