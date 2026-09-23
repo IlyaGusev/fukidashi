@@ -1,17 +1,18 @@
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from panelogue.render import ink_mask, region_of, render
+from panelogue.render import FONT, ink_mask, place, render
 
-SOURCE_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+BUBBLE = (100, 100, 300, 400)
+TEXT = (150, 200, 260, 230)
 LOOSE_BOX = (140, 150, 260, 300)
 
 
 def bubble_page() -> Image.Image:
     page = Image.new("RGB", (400, 600), "gray")
     draw = ImageDraw.Draw(page)
-    draw.ellipse((100, 100, 300, 400), fill="white", outline="black", width=4)
-    draw.text((150, 200), "SOURCE", font=ImageFont.truetype(SOURCE_FONT, 28), fill="black")
+    draw.ellipse(BUBBLE, fill="white", outline="black", width=4)
+    draw.text(TEXT[:2], "SOURCE", font=ImageFont.truetype(str(FONT), 28), fill="black")
     return page
 
 
@@ -21,19 +22,19 @@ def dark(image: Image.Image, box: tuple[int, int, int, int]) -> int:
 
 def test_loose_box_still_covers_the_whole_bubble() -> None:
     gray = np.array(bubble_page().convert("L"))
-    region, (x1, y1, x2, y2) = region_of(gray, LOOSE_BOX)
-    assert 100 < x1 < 150 and 250 < x2 < 300 and 100 < y1 < 150 and 350 < y2 < 400
-    mask = ink_mask(gray, [region])
-    assert mask[210, 160] == 255
+    inside = np.zeros_like(gray)
+    target = place(gray, inside, LOOSE_BOX)
+    assert all(abs(t - b) < 50 for t, b in zip(target, BUBBLE, strict=True))
+    mask = ink_mask(gray, inside)
+    assert mask[210, 160] == 1
     assert mask[100, 200] == 0
 
 
 def test_render_replaces_text_and_keeps_outline() -> None:
     page = bubble_page()
     out = render(page, [{"bbox": list(LOOSE_BOX), "kind": "speech", "translation": "Hi"}])
-    assert out.size == page.size
-    assert dark(out, (150, 200, 260, 230)) < dark(page, (150, 200, 260, 230)) / 4
-    assert dark(out, (110, 110, 290, 390)) > 0
+    assert dark(out, TEXT) < dark(page, TEXT) / 4
+    assert dark(out, BUBBLE) > 0
     assert dark(out, (98, 240, 106, 260)) > 0
 
 

@@ -2,6 +2,7 @@ import hashlib
 import json
 import mimetypes
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -26,10 +27,14 @@ def safe(name: str) -> str:
     return re.sub(r"[^\w.-]+", "_", name.strip())[:60] or "untitled"
 
 
-def write_json(path: Path, data: Any) -> None:
+def write_atomic(path: Path, write: Callable[[Path], object]) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False))
+    write(tmp)
     tmp.replace(path)
+
+
+def write_json(path: Path, data: Any) -> None:
+    write_atomic(path, lambda tmp: tmp.write_text(json.dumps(data, ensure_ascii=False)))
 
 
 def save_page(data: bytes, filename: str | None, content_type: str | None) -> str:
@@ -62,15 +67,13 @@ def rendered_path(page: str) -> Path:
 
 
 def render_page(page: str) -> Path | None:
-    source, target = result_path(page), rendered_path(page)
-    if not source.is_file():
+    result = load_result(page)
+    if result is None:
         return None
-    if not target.is_file() or target.stat().st_mtime < source.stat().st_mtime:
-        result = json.loads(source.read_text())
+    target = rendered_path(page)
+    if not target.is_file() or target.stat().st_mtime < result_path(page).stat().st_mtime:
         image = render(Image.open(PAGES / page), result["bubbles"])
-        tmp = target.with_suffix(".tmp.png")
-        image.save(tmp)
-        tmp.replace(target)
+        write_atomic(target, lambda tmp: image.save(tmp, "PNG"))
     return target
 
 
