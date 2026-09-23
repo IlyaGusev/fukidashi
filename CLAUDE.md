@@ -22,7 +22,9 @@
 Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` as
 `NEBIUS_API_TOKEN`.
 
-- `src/panelogue/detect.py`: VLM detection + translation of text boxes.
+- `src/panelogue/detect.py`: VLM detection + translation of text boxes (async, streamed).
+- `src/panelogue/jobs.py`: job queue for VLM calls. Worker pool size from `PANELOGUE_WORKERS`
+  (default 2). Jobs persist under `data/jobs/`; the UI follows them over SSE at `/events`.
 - `src/panelogue/web.py`: FastAPI app, page/volume storage under `data/`.
 - `src/panelogue/static/index.html`: the UI.
 - `scripts/serve.py`: runs the app on http://localhost:8083. `scripts/detect_bubbles.py`: CLI.
