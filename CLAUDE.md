@@ -23,9 +23,18 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
 `NEBIUS_API_TOKEN`.
 
 - `src/panelogue/detect.py`: VLM detection + translation of text boxes (async, streamed).
-- `src/panelogue/jobs.py`: job queue for VLM calls. Worker pool size from `PANELOGUE_WORKERS`
-  (default 2). Jobs persist under `data/jobs/`; the UI follows them over SSE at `/events`.
-- `src/panelogue/web.py`: FastAPI app, page/volume storage under `data/`.
+  Malformed model answers raise `BadOutput`. The client has no SDK retries and a per-read
+  stall timeout (`PANELOGUE_STALL_TIMEOUT`, default 60s).
+- `src/panelogue/store.py`: page, result and volume files under `data/`; `translate_page`.
+- `src/panelogue/jobs.py`: job queue. Every page of a job is its own task; a semaphore caps
+  concurrent VLM calls at `PANELOGUE_WORKERS` (default 2). Each page gets `PANELOGUE_ATTEMPTS`
+  tries (default 3) with backoff on bad output, timeouts, connection, rate-limit and 5xx errors,
+  and a hard `PANELOGUE_STEP_TIMEOUT` per try (default 600s). A page gets the previous page's
+  text as context only when that result is already on disk. Jobs persist under `data/jobs/`
+  and resume after a restart; the UI follows them over SSE at `/events`.
+  `POST /jobs/{id}/retry` resubmits the unfinished pages of a finished job.
+- `src/panelogue/web.py`: FastAPI routes only.
+- `tests/test_jobs.py`: queue tests with a fake translator. Run `uv run pytest`.
 - `src/panelogue/static/index.html`: the UI.
 - `scripts/serve.py`: runs the app on http://localhost:8083. `scripts/detect_bubbles.py`: CLI.
 - `scripts/benchmark.py`: scores Nebius vision models on OpenMantra annotations (box IoU
@@ -41,4 +50,6 @@ every process on the port also kills ngrok. Restart only the listener:
 kill $(lsof -t -sTCP:LISTEN -i :8083); (setsid nohup uv run scripts/serve.py > out/serve.log 2>&1 &)
 ```
 
-Never use `kill $(lsof -t -i :8083)` or `pkill -f` patterns that match ngrok.
+`make serve` does this and waits until the app answers. `make stop`, `make log`, `make test`
+and `make check` also exist. Never use `kill $(lsof -t -i :8083)` or `pkill -f` patterns that
+match ngrok.
