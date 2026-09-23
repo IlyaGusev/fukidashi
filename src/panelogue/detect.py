@@ -162,7 +162,7 @@ async def detect_bytes(
         "model": model,
         "temperature": 0,
         "max_tokens": 65536,
-        "extra_body": {"chat_template_kwargs": {"enable_thinking": thinking}},
+        "extra_body": {"chat_template_kwargs": {"thinking": thinking, "enable_thinking": thinking}},
         "messages": [{"role": "user", "content": content}],
     }
     optional: dict[str, Any] = {"response_format": {"type": "json_object"}}

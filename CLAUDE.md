@@ -37,6 +37,9 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
 - `tests/test_jobs.py`: queue tests with a fake translator. Run `uv run pytest`.
 - `src/panelogue/static/index.html`: the UI.
 - `scripts/serve.py`: runs the app on http://localhost:8083. `scripts/detect_bubbles.py`: CLI.
+- `scripts/benchmark.py`: scores Nebius vision models on OpenMantra annotations (box IoU
+  P/R/F1, Japanese CER, chrF vs the English reference, latency, tokens). Raw runs cache under
+  `out/bench/runs/`, so reruns only call models for missing pages. Needs the `bench` extra.
 
 ## Server restarts
 
