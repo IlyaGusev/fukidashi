@@ -21,31 +21,29 @@
     font: 14px/1.5 Inter, system-ui, sans-serif; display: flex; flex-direction: column;
   }
   header {
-    display: flex; align-items: flex-end; gap: 16px; padding: 12px 20px;
+    display: flex; align-items: flex-end; gap: 12px; padding: 12px 20px; flex-wrap: wrap;
     border-bottom: 1px solid var(--border); background: var(--panel);
   }
-  header h1 { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; margin: 0 0 6px; letter-spacing: 0.2px; }
+  header h1 { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; margin: 0 0 6px 0; margin-right: 8px; letter-spacing: 0.2px; }
   header h1 img { width: 28px; height: 28px; border-radius: 6px; }
-  nav { display: flex; gap: 4px; margin-right: auto; margin-left: 12px; }
-  nav button {
-    background: transparent; color: var(--muted); font-weight: 500; padding: 8px 14px; border-radius: 8px 8px 0 0;
-    border-bottom: 2px solid transparent; align-self: auto;
-  }
-  nav button.active { color: var(--text); border-bottom-color: var(--accent); }
+  .spacer { flex: 1; }
   .field { display: flex; flex-direction: column; gap: 2px; }
   .field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; }
   select, input[type=text] {
     background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
     border-radius: 8px; padding: 7px 10px; font: inherit;
   }
-  select#model { min-width: 240px; }
-  input#lang { width: 120px; }
+  select#model { min-width: 220px; }
+  select#volsel { min-width: 200px; }
+  input#lang { width: 110px; }
   button {
     background: var(--accent); color: #fff; border: 0; border-radius: 8px;
-    padding: 9px 18px; font: inherit; font-weight: 600; cursor: pointer; align-self: flex-end;
+    padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer; align-self: flex-end;
   }
   button:disabled { opacity: 0.5; cursor: default; }
   button.ghost { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); font-weight: 500; }
+  button.small { padding: 5px 10px; font-size: 12px; align-self: center; }
+  button.danger { color: var(--accent); }
   .toggle { display: flex; align-items: center; gap: 6px; align-self: flex-end; padding: 8px 0; color: var(--muted); cursor: pointer; user-select: none; }
   .toggle input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
   .toggle input:checked + span { color: var(--text); }
@@ -61,10 +59,11 @@
   }
   .strip .thumb:hover { border-color: var(--muted); }
   .strip .thumb.active { border-color: var(--accent); }
-  .strip .thumb.cached::after { content: ""; position: absolute; right: 3px; top: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
-  .strip .thumb.busy::after { content: ""; position: absolute; right: 3px; top: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--sfx); animation: pulse .8s ease-in-out infinite alternate; }
-  .strip .thumb.queued::after { content: ""; position: absolute; right: 3px; top: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
-  .strip .thumb.failed::after { content: ""; position: absolute; right: 3px; top: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  .strip .thumb::after { position: absolute; right: 3px; top: 3px; width: 7px; height: 7px; border-radius: 50%; }
+  .strip .thumb.cached::after { content: ""; background: var(--ok); }
+  .strip .thumb.busy::after { content: ""; background: var(--sfx); animation: pulse .8s ease-in-out infinite alternate; }
+  .strip .thumb.queued::after { content: ""; background: var(--muted); }
+  .strip .thumb.failed::after { content: ""; background: var(--accent); }
   .strip .thumb b { position: absolute; left: 0; bottom: 0; right: 0; background: rgba(0,0,0,.6); color: #fff; font: 600 10px/1 Inter; padding: 3px; text-align: center; border-radius: 0 0 4px 4px; }
   @keyframes pulse { to { opacity: .3; } }
   .strip .add {
@@ -73,19 +72,14 @@
   }
   .strip .add:hover { border-color: var(--accent); color: var(--accent); }
   .strip .hint { color: var(--muted); font-size: 12px; }
-  #volbar { display: flex; gap: 10px; align-items: flex-end; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--panel); }
-  #volbar .field { flex: 0 0 auto; }
-  #progress { flex: 1; height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; align-self: center; }
-  #progress i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .3s; }
-  #progress.failed i { background: var(--accent); }
-  #volcancel, #cancel { background: var(--panel-2); color: var(--accent); border: 1px solid var(--border); }
+  #cancel { background: var(--panel-2); color: var(--accent); border: 1px solid var(--border); }
   #canvas { flex: 1; padding: 20px; overflow: auto; display: flex; align-items: flex-start; justify-content: center; }
   #drop {
     width: 100%; max-width: 900px; min-height: 60vh; border: 2px dashed var(--border);
     border-radius: var(--radius); display: flex; align-items: center; justify-content: center;
     color: var(--muted); text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
   }
-  #drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  #drop.over, #canvas.over #drop { border-color: var(--accent); background: var(--accent-soft); }
   #drop p { margin: 0; }
   #drop strong { color: var(--text); display: block; font-size: 16px; margin-bottom: 4px; }
   #stage { position: relative; display: none; max-width: 900px; border-radius: var(--radius); overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
@@ -103,15 +97,17 @@
     display: flex; align-items: center; gap: 8px; min-height: 45px;
   }
   #status.error { color: var(--accent); }
-  .spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+  .spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; flex: 0 0 auto; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  #pagebar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+  #pagebar .label { margin-right: auto; }
+  #pagebar select { padding: 4px 8px; font-size: 12px; max-width: 100%; flex: 1 1 100%; }
   #queue { border-bottom: 1px solid var(--border); max-height: 40%; overflow: auto; }
   #queue:empty { display: none; }
   .job { padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 12px; cursor: pointer; }
   .job:last-child { border-bottom: 0; }
   .job:hover { background: var(--panel-2); }
   .job .row { display: flex; align-items: center; gap: 8px; }
-  .job .kind { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
   .job .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .job .state { color: var(--muted); }
   .job.running .state { color: var(--sfx); }
@@ -143,93 +139,101 @@
 <body>
 <header>
   <h1><img src="/static/logo.png" alt="">Fukidashi</h1>
-  <nav><button data-tab="page" class="active">Page</button><button data-tab="volume">Volume</button></nav>
+  <div class="field"><label for="volsel">Volume</label><select id="volsel"><optgroup label="OpenMantra samples" id="samples"></optgroup></select></div>
+  <button class="ghost" id="volnew" title="New volume">+</button>
+  <button class="ghost" id="volrename" title="Rename volume">Rename</button>
+  <button class="ghost danger" id="voldelete" title="Delete volume">Delete</button>
+  <span class="spacer"></span>
   <div class="field"><label for="model">Model</label><select id="model"></select></div>
   <div class="field"><label for="lang">Translate to</label><input type="text" id="lang" value="English"></div>
   <label class="toggle"><input type="checkbox" id="thinking"><span>Thinking</span></label>
   <label class="toggle"><input type="checkbox" id="typeset"><span>Typeset</span></label>
   <button id="go" disabled>Translate page</button>
+  <button class="ghost" id="govol" disabled>Whole volume</button>
+  <button class="ghost" id="gomissing" disabled title="Translate pages that have no translation yet">Missing pages</button>
   <button id="cancel" class="hidden">Cancel</button>
 </header>
 <main>
   <div id="wrap">
-    <div class="strip" id="gallery"><div class="add" id="add" title="Upload a page">+</div></div>
-    <div id="volbar" class="hidden">
-      <div class="field"><label for="volsel">Volume</label><select id="volsel"><option value="">— new —</option><optgroup label="OpenMantra samples" id="samples"></optgroup></select></div>
-      <div class="field"><label for="volname">Name</label><input type="text" id="volname" placeholder="My Manga vol. 1"></div>
-      <button class="ghost" id="volcreate">Create</button>
-      <button class="ghost" id="voladd" disabled>Add pages</button>
-      <div id="progress"><i></i></div>
-      <button id="voltranslate" disabled>Translate volume</button>
-      <button id="volcancel" class="hidden">Cancel</button>
-    </div>
-    <div class="strip hidden" id="volstrip"></div>
+    <div class="strip" id="strip"><div class="add" id="add" title="Add pages">+</div></div>
     <section id="canvas">
-      <div id="drop"><p><strong>Drop a comic page here</strong>or click to choose a file</p></div>
+      <div id="drop"><p><strong>Drop comic pages here</strong>or click to choose files</p></div>
       <div id="stage"><img id="img" alt=""></div>
     </section>
   </div>
   <aside>
     <div id="status">Pick a page to start.</div>
+    <div id="pagebar" class="hidden">
+      <span class="label"></span>
+      <button class="ghost small" id="left" title="Move left">◀</button>
+      <button class="ghost small" id="right" title="Move right">▶</button>
+      <button class="ghost small danger" id="remove" title="Remove page from volume">Remove</button>
+      <select id="versions"></select>
+      <button class="ghost small" id="pin" title="Use this version for context and typesetting">Make current</button>
+    </div>
     <div id="queue"></div>
     <ul id="list"><li id="empty">No boxes yet.</li></ul>
     <details><summary>Raw JSON</summary><pre id="raw"></pre></details>
   </aside>
 </main>
-<input type="file" id="file" accept="image/*">
 <input type="file" id="files" accept="image/*" multiple>
 <script>
 const $ = id => document.getElementById(id);
-const drop = $("drop"), img = $("img"), stage = $("stage"), list = $("list"), raw = $("raw"),
-      status = $("status"), go = $("go"), cancel = $("cancel"), model = $("model"), lang = $("lang"),
-      typeset = $("typeset");
+const drop = $("drop"), canvas = $("canvas"), img = $("img"), stage = $("stage"), list = $("list"), raw = $("raw"),
+      status = $("status"), model = $("model"), lang = $("lang"), typeset = $("typeset"), versions = $("versions");
 const COLORS = { speech: "var(--speech)", thought: "var(--thought)", narration: "var(--narration)", sfx: "var(--sfx)" };
 const ACTIVE = ["queued", "running"];
-let tab = "page", current = null, result = null, volume = null, jobs = [], pollTimer = 0, notice = null, shownFinished = null;
+let volumes = [], volume = null, page = null, translation = null, jobs = [], pollTimer = 0, notice = null, finishedKey = null;
 let stepIndex = new Map();
-
 fetch("/models").then(r => r.json()).then(d => {
   for (const m of d.models) model.add(new Option(m, m, false, m === d.default));
   lang.value = d.lang;
 });
-
 const esc = s => (s || "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 const options = () => ({ model: model.value, thinking: $("thinking").checked, lang: lang.value });
-const form = obj => { const fd = new FormData(); for (const [k, v] of Object.entries(obj)) fd.append(k, v); return fd; };
-const short = p => p.slice(14);
-const pageSrc = p => `/pages/files/${encodeURIComponent(p)}`;
-const renderedSrc = p => `/pages/${encodeURIComponent(p)}/rendered`;
+const short = f => f ? f.slice(14) : "removed page";
+const fileSrc = f => `/pages/files/${encodeURIComponent(f)}`;
+const renderedSrc = t => `/translations/${t}/rendered`;
 const now = () => Date.now() / 1000;
 const secs = s => s < 60 ? `${s.toFixed(s < 10 ? 1 : 0)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
 const kilo = n => n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`;
+const when = t => new Date(t * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
 const isActive = job => ACTIVE.includes(job.state);
 const count = (job, state) => job.steps.filter(s => s.state === state).length;
 const tokens = job => job.steps.reduce((n, s) => n + (s.tokens || 0), 0);
 const canRetry = job => !isActive(job) && job.steps.some(s => s.state !== "done");
 const percentDone = job => 100 * job.steps.filter(s => s.finished).length / job.steps.length;
+const pageIndex = () => volume ? volume.pages.findIndex(p => p.id === page?.id) : -1;
+const pageFile = id => volume?.pages.find(p => p.id === id)?.file;
 
+async function api(url, body, method = "POST") {
+  const init = { method };
+  if (body instanceof FormData) init.body = body;
+  else if (body) { init.headers = { "Content-Type": "application/json" }; init.body = JSON.stringify(body); }
+  const r = await fetch(url, init);
+  const d = await r.json();
+  if (!r.ok) { note(d.detail || r.statusText, { error: true }); return null; }
+  return d;
+}
 function setStatus(text, opts = {}) {
   status.className = opts.error ? "error" : "";
   status.innerHTML = (opts.busy ? '<span class="spinner"></span>' : "") + esc(text);
 }
-
 function note(text, opts = {}) {
   notice = text ? { text, ...opts, until: opts.error ? Date.now() + 8000 : null } : null;
   renderStatus();
 }
-
-function clear() {
-  result = null;
+function clearResult() {
+  translation = null;
   list.innerHTML = '<li id="empty">No boxes yet.</li>';
   raw.textContent = "";
   stage.querySelectorAll(".box").forEach(b => b.remove());
 }
-
-function render() {
+function drawBoxes() {
   stage.querySelectorAll(".box").forEach(b => b.remove());
-  if (!result) return;
-  const [w, h] = result.size, sx = img.clientWidth / w, sy = img.clientHeight / h;
-  result.bubbles.forEach((b, i) => {
+  if (!translation) return;
+  const [w, h] = translation.size, sx = img.clientWidth / w, sy = img.clientHeight / h;
+  translation.bubbles.forEach((b, i) => {
     const [x1, y1, x2, y2] = b.bbox, div = document.createElement("div");
     div.className = "box"; div.dataset.i = i;
     div.style.cssText = `--c:${COLORS[b.kind] || COLORS.speech};left:${x1*sx}px;top:${y1*sy}px;width:${(x2-x1)*sx}px;height:${(y2-y1)*sy}px`;
@@ -239,193 +243,200 @@ function render() {
     stage.appendChild(div);
   });
 }
-
 function activate(i) {
   document.querySelectorAll(".active[data-i]").forEach(e => e.classList.remove("active"));
   document.querySelectorAll(`[data-i="${i}"]`).forEach(e => e.classList.add("active"));
 }
-
-function show(d) {
-  result = d;
-  list.innerHTML = d.bubbles.map((b, i) => `
+function showTranslation(t) {
+  translation = t;
+  list.innerHTML = t.bubbles.map((b, i) => `
     <li data-i="${i}" style="--c:${COLORS[b.kind] || COLORS.speech}" onmouseenter="activate(${i})">
       <div class="meta"><span>${i + 1}</span><span class="kind">${b.kind}</span></div>
       <div class="text">${esc(b.text)}</div>
       <div class="tr">${esc(b.translation)}</div>
     </li>`).join("");
-  raw.textContent = JSON.stringify(d, null, 2);
+  raw.textContent = JSON.stringify(t, null, 2);
   refreshImage();
 }
-
 function refreshImage() {
-  const on = typeset.checked && result;
-  stage.classList.toggle("typeset", on);
-  const src = on ? renderedSrc(current) : pageSrc(current);
-  if (img.getAttribute("src") === src) render(); else img.src = src;
+  const on = typeset.checked && translation;
+  stage.classList.toggle("typeset", !!on);
+  const src = on ? renderedSrc(translation.id) : fileSrc(page.file);
+  if (img.getAttribute("src") === src) drawBoxes(); else img.src = src;
 }
-typeset.onchange = refreshImage;
-img.onload = render;
+typeset.onchange = () => page && refreshImage();
+img.onload = drawBoxes;
 
-function thumb(p) {
-  const t = document.createElement("div");
-  t.className = "thumb" + (p.name === current ? " active" : "") + (p.cached ? " cached" : "");
-  t.title = short(p.name);
-  t.dataset.page = p.name;
-  t.style.backgroundImage = `url(${pageSrc(p.name)})`;
-  t.onclick = () => select(p.name);
-  return t;
-}
-
-async function select(p) {
-  current = p;
-  refreshImage();
+async function selectPage(id) {
+  const p = await api(`/pages/${id}`, null, "GET");
+  if (!p) return;
+  page = p;
+  clearResult();
   drop.style.display = "none";
   stage.style.display = "block";
-  clear();
-  document.querySelectorAll(".thumb").forEach(t => t.classList.toggle("active", t.dataset.page === p));
-  shownFinished = stepOf(p)?.step.finished ?? null;
-  const r = await fetch(`/results/${encodeURIComponent(p)}`);
-  if (r.ok && current === p) show(await r.json());
+  document.querySelectorAll(".thumb").forEach(t => t.classList.toggle("active", +t.dataset.page === id));
+  fillVersions();
+  refreshImage();
+  if (p.current) await showVersion(p.current);
   renderAll();
 }
-
-async function refreshGallery() {
-  const d = await (await fetch("/pages")).json();
-  const g = $("gallery");
-  g.querySelectorAll(".thumb, .hint").forEach(e => e.remove());
-  if (!d.pages.length) g.insertAdjacentHTML("beforeend", '<span class="hint">Saved pages appear here.</span>');
-  d.pages.forEach(p => g.appendChild(thumb(p)));
-  renderThumbs();
+function fillVersions() {
+  versions.innerHTML = "";
+  for (const v of page.versions) {
+    const label = `${v.model} · ${v.thinking ? "thinking · " : ""}${v.lang} · ${v.boxes} boxes · ${when(v.created)}${v.id === page.current ? " · current" : ""}`;
+    versions.add(new Option(label, v.id, false, v.id === page.current));
+  }
+  versions.classList.toggle("hidden", !page.versions.length);
+  $("pin").classList.toggle("hidden", !page.versions.length);
 }
-
-async function upload(f) {
-  if (!f || !f.type.startsWith("image/")) return;
-  note("Uploading…", { busy: true });
-  const d = await (await fetch("/pages", { method: "POST", body: form({ image: f }) })).json();
-  await refreshGallery();
-  note(null);
-  select(d.page);
+async function showVersion(id) {
+  const t = await api(`/translations/${id}`, null, "GET");
+  if (t && page && t.page === page.id) showTranslation(t);
+  renderAll();
 }
+versions.onchange = () => showVersion(+versions.value);
+$("pin").onclick = async () => {
+  const p = await api(`/pages/${page.id}/current`, { translation: +versions.value });
+  if (p) { page = p; fillVersions(); await refreshVolume(); }
+};
 
-drop.onclick = () => tab === "page" ? $("file").click() : $("files").click();
-$("add").onclick = () => $("file").click();
-$("file").onchange = () => upload($("file").files[0]);
-["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
-["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
-drop.addEventListener("drop", e => tab === "page" ? upload(e.dataTransfer.files[0]) : addPages(e.dataTransfer.files));
-document.addEventListener("paste", e => { const f = [...e.clipboardData.files][0]; if (f && tab === "page") upload(f); });
-
-async function post(url, body) {
-  const r = await fetch(url, { method: "POST", body });
-  const d = await r.json();
-  if (d.detail) note(d.detail, { error: true });
-  await poll();
+function thumb(p, i) {
+  const t = document.createElement("div");
+  t.className = "thumb" + (p.id === page?.id ? " active" : "") + (p.current ? " cached" : "");
+  t.title = short(p.file);
+  t.dataset.page = p.id;
+  t.style.backgroundImage = `url(${fileSrc(p.file)})`;
+  t.innerHTML = `<b>${i + 1}</b>`;
+  t.onclick = () => selectPage(p.id);
+  return t;
 }
-const submit = (kind, name) => post("/jobs", form({ kind, name, ...options() }));
-const cancelJob = id => post(`/jobs/${id}/cancel`);
-const retryJob = id => post(`/jobs/${id}/retry`);
-
-go.onclick = () => { if (current) { clear(); submit("page", current); } };
-cancel.onclick = () => { const j = activeJob("page", current); if (j) cancelJob(j.id); };
-
-document.querySelectorAll("nav button").forEach(b => b.onclick = () => switchTab(b.dataset.tab));
-function switchTab(t) {
-  tab = t;
-  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === t));
-  $("gallery").classList.toggle("hidden", t !== "page");
-  $("volbar").classList.toggle("hidden", t !== "volume");
-  $("volstrip").classList.toggle("hidden", t !== "volume");
-  drop.querySelector("strong").textContent = t === "page" ? "Drop a comic page here" : "Drop the pages of a volume here";
-  current = null; clear();
+function setVolume(v) {
+  volume = v;
+  localStorage.setItem("volume", v.id);
+  $("volsel").value = v.id;
+  const s = $("strip");
+  s.querySelectorAll(".thumb, .hint").forEach(e => e.remove());
+  if (!v.pages.length) s.insertAdjacentHTML("beforeend", '<span class="hint">No pages yet. Drop files or click +.</span>');
+  v.pages.forEach((p, i) => s.appendChild(thumb(p, i)));
+  if (page && !v.pages.some(p => p.id === page.id)) unselect();
+  renderAll();
+}
+function unselect() {
+  page = null;
+  clearResult();
   drop.style.display = ""; stage.style.display = "none";
-  if (t === "volume") refreshVolumes();
-  renderAll();
+  document.querySelectorAll(".thumb.active").forEach(t => t.classList.remove("active"));
 }
-
-async function refreshVolumes() {
-  const d = await (await fetch("/volumes")).json();
+async function refreshVolumes(pick) {
+  const d = await api("/volumes", null, "GET");
+  if (!d) return;
+  volumes = d.volumes;
   const s = $("volsel"), g = $("samples");
-  s.querySelectorAll(":scope > option:not([value=''])").forEach(o => o.remove());
-  for (const v of d.volumes) s.insertBefore(new Option(v, v, false, volume && v === volume.name), g);
+  s.querySelectorAll(":scope > option").forEach(o => o.remove());
+  for (const v of volumes) s.insertBefore(new Option(`${v.title} (${v.translated}/${v.pages})`, v.id), g);
   if (!g.children.length) {
     const { samples } = await (await fetch("/samples")).json();
-    for (const b of samples) g.appendChild(new Option(b, "sample:" + b));
+    for (const b of samples) g.appendChild(new Option(`import ${b}`, "sample:" + b));
   }
+  const wanted = pick ?? volume?.id ?? +localStorage.getItem("volume");
+  const target = volumes.find(v => v.id === wanted) || volumes[0];
+  if (target) await loadVolume(target.id);
 }
-
+async function loadVolume(id) {
+  const v = await api(`/volumes/${id}`, null, "GET");
+  if (v) { if (v.id !== volume?.id) unselect(); setVolume(v); }
+}
+const refreshVolume = () => volume && loadVolume(volume.id);
 $("volsel").onchange = () => {
   const v = $("volsel").value;
   if (v.startsWith("sample:")) return importSample(v.slice(7));
-  v ? loadVolume(v) : setVolume(null);
+  loadVolume(+v);
 };
-
 async function importSample(book) {
   note(`Downloading ${book} from OpenMantra…`, { busy: true });
   $("volsel").disabled = true;
-  try {
-    const d = await (await fetch(`/samples/${encodeURIComponent(book)}`, { method: "POST" })).json();
-    if (d.detail) throw new Error(d.detail);
-    note(null);
-    setVolume(d);
-    await refreshVolumes();
-  } catch (err) {
-    note(err.message, { error: true });
-  } finally {
-    $("volsel").disabled = false;
-  }
+  const v = await api(`/samples/${encodeURIComponent(book)}`);
+  $("volsel").disabled = false;
+  if (!v) return;
+  note(null);
+  unselect(); setVolume(v);
+  await refreshVolumes();
 }
-$("volcreate").onclick = async () => {
-  const name = $("volname").value.trim();
-  if (!name) return $("volname").focus();
-  setVolume(await (await fetch("/volumes", { method: "POST", body: form({ name }) })).json());
-  $("volname").value = "";
-  refreshVolumes();
+$("volnew").onclick = async () => {
+  const title = prompt("Volume title");
+  if (!title?.trim()) return;
+  const v = await api("/volumes", { title });
+  if (v) { unselect(); setVolume(v); await refreshVolumes(); }
 };
-$("voladd").onclick = () => $("files").click();
-$("files").onchange = () => addPages($("files").files);
-$("voltranslate").onclick = () => submit("volume", volume.name);
-$("volcancel").onclick = () => { const j = activeJob("volume", volume?.name); if (j) cancelJob(j.id); };
+$("volrename").onclick = async () => {
+  const title = prompt("New title", volume.title);
+  if (!title?.trim() || title === volume.title) return;
+  const v = await api(`/volumes/${volume.id}/title`, { title });
+  if (v) { setVolume(v); await refreshVolumes(); }
+};
+$("voldelete").onclick = async () => {
+  if (!confirm(`Delete “${volume.title}” with its ${volume.pages.length} pages and their translations?`)) return;
+  const d = await api(`/volumes/${volume.id}`, null, "DELETE");
+  if (d) { unselect(); volume = null; await refreshVolumes(volumes[0]?.id); }
+};
 
+drop.onclick = () => $("files").click();
+$("add").onclick = () => $("files").click();
+$("files").onchange = () => addPages($("files").files);
+["dragenter", "dragover"].forEach(ev => canvas.addEventListener(ev, e => { e.preventDefault(); canvas.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => canvas.addEventListener(ev, e => { e.preventDefault(); canvas.classList.remove("over"); }));
+canvas.addEventListener("drop", e => addPages(e.dataTransfer.files));
+document.addEventListener("paste", e => addPages(e.clipboardData.files));
 async function addPages(files) {
-  if (!volume) return note("Create or pick a volume first.", { error: true });
   const fd = new FormData();
   [...files].filter(f => f.type.startsWith("image/")).forEach(f => fd.append("images", f));
   const n = fd.getAll("images").length;
   if (!n) return;
-  note(`Uploading ${n} pages…`, { busy: true });
-  const v = await (await fetch(`/volumes/${encodeURIComponent(volume.name)}/pages`, { method: "POST", body: fd })).json();
+  note(`Uploading ${n} page${n > 1 ? "s" : ""}…`, { busy: true });
+  const v = await api(`/volumes/${volume.id}/pages`, fd);
+  if (!v) return;
   note(null);
+  const added = v.pages.filter(p => !volume.pages.some(q => q.id === p.id));
   setVolume(v);
+  await refreshVolumes();
+  if (n === 1 && added.length === 1) selectPage(added[0].id);
 }
+async function move(delta) {
+  const order = volume.pages.map(p => p.id), i = order.indexOf(page.id), j = i + delta;
+  if (j < 0 || j >= order.length) return;
+  [order[i], order[j]] = [order[j], order[i]];
+  const v = await api(`/volumes/${volume.id}/order`, { pages: order });
+  if (v) setVolume(v);
+}
+$("left").onclick = () => move(-1);
+$("right").onclick = () => move(1);
+$("remove").onclick = async () => {
+  if (!confirm(`Remove page ${pageIndex() + 1} and its ${page.versions.length} translation(s)?`)) return;
+  const v = await api(`/pages/${page.id}`, null, "DELETE");
+  if (v) { unselect(); setVolume(v); await refreshVolumes(); }
+};
 
-async function loadVolume(name) {
-  setVolume(await (await fetch(`/volumes/${encodeURIComponent(name)}`)).json());
+async function submit(pages) {
+  await api("/jobs", { volume: volume.id, pages, ...options() });
+  await poll();
 }
-
-function setVolume(v) {
-  volume = v;
-  $("voladd").disabled = !v;
-  const s = $("volstrip");
-  s.innerHTML = "";
-  if (v) {
-    $("volsel").value = v.name;
-    if (!v.pages.length) s.insertAdjacentHTML("beforeend", '<span class="hint">No pages yet. Click “Add pages” or drop files.</span>');
-    v.pages.forEach((p, i) => {
-      const t = thumb(p);
-      t.insertAdjacentHTML("beforeend", `<b>${i + 1}</b>`);
-      s.appendChild(t);
-    });
-  }
-  renderAll();
-}
+$("go").onclick = () => { if (page) submit([page.id]); };
+$("govol").onclick = () => submit(null);
+$("gomissing").onclick = () => submit(volume.pages.filter(p => !p.current).map(p => p.id));
+$("cancel").onclick = () => { const j = volumeJobs().find(isActive); if (j) cancelJob(j.id); };
+const cancelJob = async id => { await api(`/jobs/${id}/cancel`); await poll(); };
+const retryJob = async id => { await api(`/jobs/${id}/retry`); await poll(); };
 
 async function poll() {
   try {
     jobs = (await (await fetch("/jobs")).json()).jobs;
     stepIndex = new Map();
     for (const job of jobs) for (const step of job.steps) if (!stepIndex.has(step.page)) stepIndex.set(step.page, { job, step });
-    const done = stepOf(current)?.step;
-    if (done?.state === "done" && done.finished !== shownFinished) select(current);
+    const key = jobs.map(j => `${j.id}:${j.steps.filter(s => s.finished).length}`).join();
+    const done = stepOf(page?.id)?.step;
+    if (done?.state === "done" && page && !page.versions.some(v => v.id === done.translation)) await selectPage(page.id);
+    if (key !== finishedKey && finishedKey !== null) await refreshVolumes();
+    finishedKey = key;
   } catch (err) {
     note(`Server unreachable: ${err.message}`, { error: true });
   }
@@ -433,17 +444,13 @@ async function poll() {
   clearTimeout(pollTimer);
   pollTimer = setTimeout(poll, jobs.some(isActive) ? 1000 : 5000);
 }
-
-const latest = (kind, name) => jobs.find(j => j.kind === kind && j.name === name);
-const activeJob = (kind, name) => { const j = latest(kind, name); return j && isActive(j) ? j : null; };
-const stepOf = page => stepIndex.get(page);
-
+const volumeJobs = () => volume ? jobs.filter(j => j.volume === volume.id) : [];
+const stepOf = id => stepIndex.get(id);
 function describeStep(s) {
   const progress = s.phase ? `${s.phase} · ${kilo(s.chars)} chars` : "waiting for model";
   const attempt = s.attempts > 1 ? ` · attempt ${s.attempts}` : "";
-  return `${short(s.page)} · ${progress}${attempt} · ${secs(now() - s.started)}`;
+  return `${short(s.file)} · ${progress}${attempt} · ${secs(now() - s.started)}`;
 }
-
 function describe(job) {
   const total = job.steps.length, failed = count(job, "failed"), parts = [];
   if (total > 1) parts.push(`${count(job, "done")}/${total} pages`);
@@ -458,25 +465,22 @@ function describe(job) {
   }
   return parts.join(" · ");
 }
-
-function jobRow({ id, kind, name }) {
+const jobLabel = job => job.steps.length === 1 ? `${job.title ?? "deleted volume"} · ${short(job.steps[0].file)}` : `${job.title ?? "deleted volume"} · ${job.steps.length} pages`;
+function jobRow(job) {
   const el = document.createElement("div");
-  el.dataset.id = id;
-  el.innerHTML = `<div class="row"><span class="kind">${kind}</span><span class="name"></span><span class="state"></span>
+  el.dataset.id = job.id;
+  el.innerHTML = `<div class="row"><span class="name"></span><span class="state"></span>
     <button class="x" title="Cancel">×</button><button class="retry" title="Retry unfinished pages">↻</button></div>
     <div class="bar"><i></i></div><div class="sub"></div>`;
-  const label = el.querySelector(".name");
-  label.textContent = kind === "page" ? short(name) : name;
-  label.title = name;
-  el.querySelector(".x").onclick = e => { e.stopPropagation(); cancelJob(id); };
-  el.querySelector(".retry").onclick = e => { e.stopPropagation(); retryJob(id); };
-  el.onclick = () => {
-    if (kind === "volume") { if (tab !== "volume") switchTab("volume"); loadVolume(name); }
-    else { if (tab !== "page") switchTab("page"); select(name); }
+  el.querySelector(".x").onclick = e => { e.stopPropagation(); cancelJob(job.id); };
+  el.querySelector(".retry").onclick = e => { e.stopPropagation(); retryJob(job.id); };
+  el.onclick = async () => {
+    if (job.volume === null) return;
+    if (job.volume !== volume?.id) await loadVolume(job.volume);
+    if (job.steps.length === 1 && job.steps[0].page) selectPage(job.steps[0].page);
   };
   return el;
 }
-
 function renderQueue() {
   const q = $("queue");
   const rows = [...jobs].sort((a, b) => (isActive(b) - isActive(a)) || b.created - a.created).slice(0, 8);
@@ -486,6 +490,7 @@ function renderQueue() {
     const el = q.querySelector(`[data-id="${job.id}"]`) || jobRow(job);
     if (q.children[i] !== el) q.insertBefore(el, q.children[i] || null);
     el.className = `job ${job.state}`;
+    el.querySelector(".name").textContent = jobLabel(job);
     el.querySelector(".state").textContent = job.state;
     el.querySelector(".x").classList.toggle("hidden", !isActive(job));
     el.querySelector(".retry").classList.toggle("hidden", !canRetry(job));
@@ -493,57 +498,55 @@ function renderQueue() {
     el.querySelector(".sub").textContent = `${job.model} · ${describe(job)}`;
   });
 }
-
 function renderThumbs() {
   document.querySelectorAll(".thumb").forEach(t => {
-    const s = stepOf(t.dataset.page)?.step;
+    const s = stepOf(+t.dataset.page)?.step;
     t.classList.toggle("queued", s?.state === "queued");
     t.classList.toggle("busy", s?.state === "running");
     t.classList.toggle("failed", s?.state === "failed");
     if (s?.state === "done") t.classList.add("cached");
   });
 }
-
-function renderVolume() {
-  const job = volume && latest("volume", volume.name);
-  $("voltranslate").disabled = !volume || !volume.pages.length;
-  $("volcancel").classList.toggle("hidden", !(job && isActive(job)));
-  const bar = $("progress");
-  bar.classList.toggle("failed", !!job && count(job, "failed") > 0);
-  bar.firstElementChild.style.width = job ? `${percentDone(job)}%` : 0;
+function renderPageBar() {
+  const bar = $("pagebar");
+  bar.classList.toggle("hidden", !page);
+  if (!page) return;
+  const i = pageIndex();
+  bar.querySelector(".label").textContent = `Page ${i + 1} of ${volume.pages.length} · ${short(page.file)}`;
+  $("left").disabled = i <= 0;
+  $("right").disabled = i >= volume.pages.length - 1;
+  $("pin").disabled = +versions.value === page.current;
 }
-
+function renderControls() {
+  const busy = volumeJobs().some(isActive);
+  $("go").disabled = !page;
+  $("govol").disabled = !volume?.pages.length;
+  $("gomissing").disabled = !volume?.pages.some(p => !p.current);
+  $("cancel").classList.toggle("hidden", !busy);
+  $("volrename").disabled = $("voldelete").disabled = !volume;
+}
 function renderStatus() {
-  go.disabled = !current;
-  cancel.classList.toggle("hidden", !(current && activeJob("page", current)));
   if (notice && !(notice.until && Date.now() > notice.until)) return setStatus(notice.text, notice);
-  if (tab === "volume") {
-    if (!volume) return setStatus("Pick or create a volume.");
-    const job = latest("volume", volume.name);
-    if (job && (isActive(job) || !current)) return setStatus(describe(job), { busy: isActive(job), error: job.state === "failed" });
-    if (!current) return setStatus(`${volume.pages.length} pages in ${volume.name}`);
-  }
-  if (!current) return setStatus("Pick a page to start.");
-  const hit = stepOf(current);
+  if (!volume) return setStatus("Pick or create a volume.");
+  const job = volumeJobs()[0];
+  if (job && isActive(job) && (!page || job.steps.length > 1)) return setStatus(describe(job), { busy: true });
+  if (!page) return setStatus(`${volume.pages.length} pages in ${volume.title}, ${volume.pages.filter(p => p.current).length} translated`);
+  const hit = stepOf(page.id);
   if (hit && isActive(hit.job)) {
     if (hit.step.state === "running") return setStatus(describeStep(hit.step), { busy: true });
-    if (hit.step.state === "queued") return setStatus(`${short(current)} · queued`, { busy: true });
+    if (hit.step.state === "queued") return setStatus(`${short(page.file)} · queued`, { busy: true });
   }
-  if (hit && !result && hit.step.state !== "done") {
-    return setStatus(`${short(current)} · ${hit.step.state}${hit.step.error ? " · " + hit.step.error : ""}`, { error: hit.step.state === "failed" });
+  if (hit && !translation && hit.step.state !== "done") {
+    return setStatus(`${short(page.file)} · ${hit.step.state}${hit.step.error ? " · " + hit.step.error : ""}`, { error: hit.step.state === "failed" });
   }
-  if (result) {
-    const u = result.usage?.total_tokens;
-    return setStatus(`${result.bubbles.length} boxes · ${result.model}${result.thinking ? " · thinking" : ""} · ${result.lang || ""}${u ? " · " + kilo(u) + " tokens" : ""}`);
+  if (translation) {
+    const u = translation.usage?.total_tokens;
+    return setStatus(`${translation.bubbles.length} boxes · ${translation.model}${translation.thinking ? " · thinking" : ""} · ${translation.lang}${u ? " · " + kilo(u) + " tokens" : ""}`);
   }
-  setStatus(`${short(current)} · ready`);
+  setStatus(`${short(page.file)} · not translated yet`);
 }
-
-function renderAll() { renderQueue(); renderThumbs(); renderVolume(); renderStatus(); }
-
-refreshGallery();
-poll();
-window.addEventListener("resize", render);
+function renderAll() { renderQueue(); renderThumbs(); renderPageBar(); renderControls(); renderStatus(); }
+refreshVolumes().then(poll);
 </script>
 </body>
 </html>

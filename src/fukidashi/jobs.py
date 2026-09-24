@@ -1,5 +1,4 @@
 import asyncio
-import sqlite3
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -8,9 +7,8 @@ from typing import Any
 
 import openai
 
-from fukidashi.detect import BadOutput, Progress
-from fukidashi.settings import settings
-from fukidashi.store import translate_page
+from fukidashi.detect import BadOutput, Progress, detect_file
+from fukidashi.store import Store
 
 ACTIVE = ("queued", "running")
 ACTIVE_SQL = "(" + ", ".join(f"'{s}'" for s in ACTIVE) + ")"
@@ -23,13 +21,14 @@ RETRYABLE = (
 )
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
-    id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, model TEXT NOT NULL,
-    thinking INTEGER NOT NULL, lang TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'queued',
-    created REAL NOT NULL, started REAL, finished REAL);
+    id TEXT PRIMARY KEY, volume INTEGER NOT NULL REFERENCES volumes(id) ON DELETE CASCADE,
+    model TEXT NOT NULL, thinking INTEGER NOT NULL, lang TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'queued', created REAL NOT NULL, started REAL, finished REAL);
 CREATE TABLE IF NOT EXISTS steps (
-    job TEXT NOT NULL REFERENCES jobs(id), position INTEGER NOT NULL, page TEXT NOT NULL,
+    job TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, position INTEGER NOT NULL,
+    page INTEGER REFERENCES pages(id) ON DELETE SET NULL,
     state TEXT NOT NULL DEFAULT 'queued', attempts INTEGER NOT NULL DEFAULT 0,
-    started REAL, finished REAL, boxes INTEGER, tokens INTEGER, error TEXT,
+    started REAL, finished REAL, translation INTEGER, tokens INTEGER, error TEXT,
     PRIMARY KEY (job, position));
 CREATE INDEX IF NOT EXISTS steps_state ON steps(state);
 """
@@ -37,7 +36,8 @@ CLAIM = """
 UPDATE steps SET state = 'running', started = ?, attempts = 0, error = NULL
 WHERE (job, position) = (
     SELECT s.job, s.position FROM steps s JOIN jobs j ON j.id = s.job
-    WHERE s.state = 'queued' ORDER BY j.kind = 'volume', j.created, s.position LIMIT 1)
+    WHERE s.state = 'queued'
+    ORDER BY (SELECT count(*) FROM steps WHERE job = j.id) > 1, j.created, s.position LIMIT 1)
 RETURNING job, position, page
 """
 FINISH_JOB = f"""
@@ -47,8 +47,13 @@ UPDATE jobs SET finished = ?, state = CASE
 WHERE id = ? AND state = 'running'
   AND NOT EXISTS (SELECT 1 FROM steps WHERE job = jobs.id AND state IN {ACTIVE_SQL})
 """
+JOB_LIST = "SELECT j.*, v.title FROM jobs j LEFT JOIN volumes v ON v.id = j.volume"
+STEP_LIST = (
+    "SELECT s.*, p.file FROM steps s LEFT JOIN pages p ON p.id = s.page "
+    "WHERE s.job = ? ORDER BY s.position"
+)
 
-Translate = Callable[[str, dict[str, Any], str | None, Progress], Awaitable[dict[str, Any]]]
+Translate = Callable[[Path, dict[str, Any], list[str] | None, Progress], Awaitable[dict[str, Any]]]
 StepKey = tuple[str, int]
 
 
@@ -64,22 +69,27 @@ def duplicate_message(job: dict[str, Any]) -> str:
     thinking = "thinking on" if job["thinking"] else "thinking off"
     return (
         f"{job['model']}, {thinking}, {job['lang']} is already {job['state']} "
-        f"for this {job['kind']}. Change a setting to queue another run."
+        "for these pages. Change a setting to queue another run."
     )
+
+
+def placeholders(values: list[int]) -> str:
+    return "(" + ", ".join("?" * len(values)) + ")"
 
 
 class JobQueue:
     def __init__(
         self,
-        translate: Translate = translate_page,
-        db: Path = settings.data_dir / "jobs.db",
+        store: Store,
+        translate: Translate = detect_file,
         concurrency: int = 2,
         attempts: int = 3,
         step_timeout: float = 600,
         backoff: float = 2,
     ) -> None:
+        self._store = store
+        self._db = store.db
         self._translate = translate
-        self._db_path = db
         self._concurrency = concurrency
         self._attempts = attempts
         self._step_timeout = step_timeout
@@ -88,14 +98,9 @@ class JobQueue:
         self._running: dict[StepKey, asyncio.Task[dict[str, Any] | None]] = {}
         self._progress: dict[StepKey, tuple[str, int]] = {}
         self._wake = asyncio.Event()
+        self._db.executescript(SCHEMA)
 
     async def start(self) -> None:
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(self._db_path, isolation_level=None)
-        self._db.row_factory = sqlite3.Row
-        self._db.execute("PRAGMA journal_mode = WAL")
-        self._db.execute("PRAGMA synchronous = NORMAL")
-        self._db.executescript(SCHEMA)
         self._db.execute("UPDATE steps SET state = 'queued' WHERE state = 'running'")
         self._workers = [asyncio.create_task(self._work()) for _ in range(self._concurrency)]
         self._wake.set()
@@ -104,35 +109,40 @@ class JobQueue:
         for task in [*self._workers, *self._running.values()]:
             task.cancel()
         await asyncio.gather(*self._workers, return_exceptions=True)
-        self._db.close()
 
     def list_jobs(self, limit: int = 30) -> list[dict[str, Any]]:
-        rows = self._db.execute("SELECT * FROM jobs ORDER BY created DESC LIMIT ?", (limit,))
+        rows = self._db.execute(f"{JOB_LIST} ORDER BY j.created DESC LIMIT ?", (limit,))
         return [self._with_steps(dict(r)) for r in rows]
 
     def get(self, job_id: str) -> dict[str, Any] | None:
-        row = self._db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        row = self._db.execute(f"{JOB_LIST} WHERE j.id = ?", (job_id,)).fetchone()
         return self._with_steps(dict(row)) if row else None
 
-    def active_for(self, kind: str, name: str, options: dict[str, Any]) -> dict[str, Any] | None:
+    def busy(self, pages: list[int]) -> bool:
         row = self._db.execute(
-            "SELECT * FROM jobs WHERE kind = :kind AND name = :name AND model = :model "
-            f"AND thinking = :thinking AND lang = :lang AND state IN {ACTIVE_SQL}",
-            {"kind": kind, "name": name, **options},
+            f"SELECT 1 FROM steps WHERE state IN {ACTIVE_SQL} AND page IN {placeholders(pages)}",
+            pages,
+        ).fetchone()
+        return row is not None
+
+    def active_for(self, pages: list[int], options: dict[str, Any]) -> dict[str, Any] | None:
+        row = self._db.execute(
+            f"{JOB_LIST} JOIN steps s ON s.job = j.id WHERE s.state IN {ACTIVE_SQL} "
+            f"AND s.page IN {placeholders(pages)} "
+            "AND j.model = ? AND j.thinking = ? AND j.lang = ? LIMIT 1",
+            (*pages, options["model"], options["thinking"], options["lang"]),
         ).fetchone()
         return self._with_steps(dict(row)) if row else None
 
-    def submit(
-        self, kind: str, name: str, pages: list[str], options: dict[str, Any]
-    ) -> dict[str, Any]:
-        if duplicate := self.active_for(kind, name, options):
+    def submit(self, volume: int, pages: list[int], options: dict[str, Any]) -> dict[str, Any]:
+        if duplicate := self.active_for(pages, options):
             raise Duplicate(duplicate_message(duplicate))
         job_id = uuid.uuid4().hex[:12]
         self._db.execute("BEGIN")
         self._db.execute(
-            "INSERT INTO jobs (id, kind, name, model, thinking, lang, created) "
-            "VALUES (:id, :kind, :name, :model, :thinking, :lang, :created)",
-            {"id": job_id, "kind": kind, "name": name, "created": time.time(), **options},
+            "INSERT INTO jobs (id, volume, model, thinking, lang, created) "
+            "VALUES (:id, :volume, :model, :thinking, :lang, :created)",
+            {"id": job_id, "volume": volume, "created": time.time(), **options},
         )
         self._db.executemany(
             "INSERT INTO steps (job, position, page) VALUES (?, ?, ?)",
@@ -161,9 +171,8 @@ class JobQueue:
                 task.cancel()
 
     def _with_steps(self, job: dict[str, Any]) -> dict[str, Any]:
-        rows = self._db.execute("SELECT * FROM steps WHERE job = ? ORDER BY position", (job["id"],))
         steps = []
-        for r in rows:
+        for r in self._db.execute(STEP_LIST, (job["id"],)):
             phase, chars = self._progress.get((job["id"], r["position"]), (None, 0))
             steps.append({**dict(r), "phase": phase, "chars": chars})
         return {**job, "thinking": bool(job["thinking"]), "steps": steps}
@@ -175,7 +184,7 @@ class JobQueue:
                 await self._run(*claimed)
             await self._wake.wait()
 
-    def _claim(self) -> tuple[str, int, str] | None:
+    def _claim(self) -> tuple[str, int, int] | None:
         now = time.time()
         row = self._db.execute(CLAIM, (now,)).fetchone()
         if not row:
@@ -186,7 +195,7 @@ class JobQueue:
         )
         return row["job"], row["position"], row["page"]
 
-    async def _run(self, job_id: str, position: int, page: str) -> None:
+    async def _run(self, job_id: str, position: int, page: int) -> None:
         key = (job_id, position)
         task = asyncio.create_task(self._attempt(key, page))
         self._running[key] = task
@@ -196,21 +205,19 @@ class JobQueue:
             self._running.pop(key, None)
             self._progress.pop(key, None)
         if not task.cancelled():
-            self._end(key, task.result())
+            self._end(key, page, task.result())
 
-    async def _attempt(self, key: StepKey, page: str) -> dict[str, Any] | None:
-        job_id, position = key
-        job = self.get(job_id)
+    async def _attempt(self, key: StepKey, page: int) -> dict[str, Any] | None:
+        job = self.get(key[0])
         assert job is not None
         options = job_options(job)
-        previous_page = job["steps"][position - 1]["page"] if position else None
+        path = self._store.page_path(page)
         for attempt in range(1, self._attempts + 1):
             self._update_step(key, attempts=attempt)
+            context = self._store.context_for(page)
             try:
                 async with asyncio.timeout(self._step_timeout):
-                    return await self._translate(
-                        page, options, previous_page, self._progress_for(key)
-                    )
+                    return await self._translate(path, options, context, self._progress_for(key))
             except RETRYABLE as e:
                 self._update_step(key, error=self._describe(e))
                 if attempt < self._attempts:
@@ -238,18 +245,19 @@ class JobQueue:
             (*fields.values(), *key),
         )
 
-    def _end(self, key: StepKey, result: dict[str, Any] | None) -> None:
+    def _end(self, key: StepKey, page: int, result: dict[str, Any] | None) -> None:
         now = time.time()
         if result is None:
             self._update_step(key, state="failed", finished=now)
         else:
+            translation = self._store.add_translation(page, result)
             usage = result.get("usage") or {}
             self._update_step(
                 key,
                 state="done",
                 finished=now,
                 error=None,
-                boxes=len(result["bubbles"]),
+                translation=translation,
                 tokens=usage.get("total_tokens"),
             )
         self._db.execute(FINISH_JOB, (now, key[0]))
