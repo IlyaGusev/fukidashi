@@ -1,7 +1,7 @@
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from fukidashi.render import FONT, ink_mask, place, render
+from fukidashi.render import FONT, ink_mask, page_layouts, place, render
 
 BUBBLE = (100, 100, 300, 400)
 TEXT = (150, 200, 260, 230)
@@ -22,9 +22,8 @@ def dark(image: Image.Image, box: tuple[int, int, int, int]) -> int:
 
 def test_loose_box_still_covers_the_whole_bubble() -> None:
     gray = np.array(bubble_page().convert("L"))
-    inside = np.zeros_like(gray)
-    target = place(gray, inside, LOOSE_BOX)
-    assert all(abs(t - b) < 50 for t, b in zip(target, BUBBLE, strict=True))
+    inside, (target,) = place(gray, [LOOSE_BOX])
+    assert all(abs(t - b) < 60 for t, b in zip(target, BUBBLE, strict=True))
     mask = ink_mask(gray, inside)
     assert mask[210, 160] == 1
     assert mask[100, 200] == 0
@@ -45,10 +44,29 @@ def test_text_stays_inside_a_jagged_bubble() -> None:
     draw.rectangle((50, 150, 350, 250), fill="white", outline="black", width=4)
     draw.rectangle((154, 150, 246, 250), fill="white")
     gray = np.array(page.convert("L"))
-    inside = np.zeros_like(gray)
-    x1, y1, x2, y2 = place(gray, inside, (120, 120, 280, 280))
+    inside, ((x1, y1, x2, y2),) = place(gray, [(120, 120, 280, 280)])
     assert inside[y1:y2, x1:x2].all()
-    assert (x2 - x1) * (y2 - y1) >= 80 * 280
+    assert (x2 - x1) * (y2 - y1) >= 70 * 250
+
+
+def test_boxes_sharing_a_bubble_get_separate_rects() -> None:
+    gray = np.array(bubble_page().convert("L"))
+    _, (left, right) = place(gray, [(130, 150, 190, 350), (210, 150, 270, 350)])
+    assert left[2] <= right[0]
+    assert left[2] - left[0] > 40 and right[2] - right[0] > 40
+
+
+def test_text_on_open_paper_stays_near_its_box() -> None:
+    gray = np.full((600, 600), 255, np.uint8)
+    _, (target,) = place(gray, [(200, 200, 300, 400)])
+    assert target[0] >= 200 and target[2] <= 300
+
+
+def test_short_texts_use_the_page_font_size() -> None:
+    long = "A long line that needs wrapping to fit"
+    rects = [(0, 0, 300, 300), (0, 0, 120, 120), (0, 0, 120, 120)]
+    (short, _), (small, _), _ = page_layouts(["Hi", long, long], rects)
+    assert short.size == small.size < 60
 
 
 def test_sfx_and_empty_translations_are_left_alone() -> None:

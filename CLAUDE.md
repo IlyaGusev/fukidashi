@@ -39,8 +39,11 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
   streaming progress on running steps) every second while anything is active.
   `POST /jobs/{id}/retry` resubmits the unfinished pages of a finished job.
 - `src/fukidashi/render.py`: typesets a result onto its page. Finds each bubble's white interior around
-  the box, erases the ink with OpenCV inpainting and draws the translation in Comic Neue at the largest
-  size that fits the largest rectangle in that interior that holds the box center. Skips `sfx`. `store.render_page` caches the PNG under `data/rendered/`;
+  the box (rejected as a leak into the page when it is over 5x the box area or covers over 30% of the
+  crop border), splits an interior shared by several boxes by nearest box, erases the ink with OpenCV
+  inpainting and draws the translation in Comic Neue in the largest rectangle in that interior that
+  holds the box center, inset 6%. Font size is the largest that fits, capped at the page median.
+  Skips `sfx`. `store.render_page` caches the PNG under `data/rendered/`;
   `GET /pages/{name}/rendered` serves it and the Typeset toggle in the UI shows it.
 - `src/fukidashi/web.py`: FastAPI routes only.
 - `tests/test_jobs.py`: queue tests with a fake translator. Run `uv run pytest`.

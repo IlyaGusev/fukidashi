@@ -20,7 +20,9 @@ LINE_SPACING = 1.1
 EXPAND = 1.0
 CENTER = -1 / 3
 MIN_FILL = 0.2
-MAX_FILL = 3.0
+MAX_FILL = 5.0
+MAX_EDGE = 0.3
+PAD = 0.06
 
 Mask = NDArray[np.uint8]
 Rect = tuple[int, int, int, int]
@@ -57,7 +59,8 @@ def bubble_interior(crop: Mask, box: Rect) -> Mask | None:
     cv2.drawContours(filled, contours, -1, 1, cv2.FILLED)
     x1, y1, x2, y2 = box
     area = (x2 - x1) * (y2 - y1)
-    if not MIN_FILL * area <= int(filled.sum()) <= MAX_FILL * area:
+    edge = np.concatenate([filled[0], filled[-1], filled[:, 0], filled[:, -1]])
+    if not MIN_FILL * area <= int(filled.sum()) <= MAX_FILL * area or edge.mean() > MAX_EDGE:
         return None
     return filled
 
@@ -92,18 +95,51 @@ def inscribed_rect(mask: Mask, px: int, py: int) -> Rect:
     return best
 
 
-def place(gray: Mask, inside: Mask, bbox: Rect) -> Rect:
+def interior(gray: Mask, bbox: Rect) -> tuple[Rect, Mask]:
     height, width = gray.shape
     x1, y1, x2, y2 = scale(bbox, EXPAND, width, height)
     box = (bbox[0] - x1, bbox[1] - y1, bbox[2] - x1, bbox[3] - y1)
-    interior = bubble_interior(gray[y1:y2, x1:x2], box)
-    if interior is None:
-        interior = np.zeros((y2 - y1, x2 - x1), np.uint8)
-        interior[box[1] : box[3], box[0] : box[2]] = 1
-    interior = cv2.erode(interior, disk(OUTLINE_MARGIN)).astype(np.uint8)
-    inside[y1:y2, x1:x2] |= interior
-    rect = inscribed_rect(interior, (box[0] + box[2]) // 2, (box[1] + box[3]) // 2)
-    return (x1 + rect[0], y1 + rect[1], x1 + rect[2], y1 + rect[3])
+    mask = bubble_interior(gray[y1:y2, x1:x2], box)
+    if mask is None:
+        mask = np.zeros((y2 - y1, x2 - x1), np.uint8)
+        mask[box[1] : box[3], box[0] : box[2]] = 1
+    return (x1, y1, x2, y2), cv2.erode(mask, disk(OUTLINE_MARGIN)).astype(np.uint8)
+
+
+def box_distance(crop: Rect, bbox: Rect) -> NDArray[np.float32]:
+    x1, y1, x2, y2 = crop
+    ys, xs = np.mgrid[y1:y2, x1:x2]
+    dx = np.maximum(np.maximum(bbox[0] - xs, xs - bbox[2]), 0)
+    dy = np.maximum(np.maximum(bbox[1] - ys, ys - bbox[3]), 0)
+    distance: NDArray[np.float32] = np.hypot(dx, dy).astype(np.float32)
+    return distance
+
+
+def claim(gray: Mask, boxes: list[Rect]) -> tuple[NDArray[np.int32], list[Rect]]:
+    owner = np.full(gray.shape, -1, np.int32)
+    nearest = np.full(gray.shape, np.inf, np.float32)
+    crops = []
+    for i, bbox in enumerate(boxes):
+        crop, mask = interior(gray, bbox)
+        x1, y1, x2, y2 = crop
+        distance = box_distance(crop, bbox)
+        closer = mask.astype(bool) & (distance < nearest[y1:y2, x1:x2])
+        owner[y1:y2, x1:x2][closer] = i
+        nearest[y1:y2, x1:x2][closer] = distance[closer]
+        crops.append(crop)
+    return owner, crops
+
+
+def place(gray: Mask, boxes: list[Rect]) -> tuple[Mask, list[Rect]]:
+    height, width = gray.shape
+    owner, crops = claim(gray, boxes)
+    targets = []
+    for i, (bbox, (x1, y1, x2, y2)) in enumerate(zip(boxes, crops, strict=True)):
+        own = (owner[y1:y2, x1:x2] == i).astype(np.uint8)
+        rect = inscribed_rect(own, (bbox[0] + bbox[2]) // 2 - x1, (bbox[1] + bbox[3]) // 2 - y1)
+        rect = (x1 + rect[0], y1 + rect[1], x1 + rect[2], y1 + rect[3])
+        targets.append(scale(rect, -PAD, width, height))
+    return (owner >= 0).astype(np.uint8), targets
 
 
 def ink_mask(gray: Mask, inside: Mask) -> Mask:
@@ -132,8 +168,10 @@ def line_height(font: ImageFont.FreeTypeFont) -> int:
     return int((ascent + descent) * LINE_SPACING)
 
 
-def fit(text: str, width: int, height: int) -> tuple[ImageFont.FreeTypeFont, list[str]]:
-    for size in range(max(MIN_FONT, min(MAX_FONT, height)), MIN_FONT - 1, -1):
+def fit(
+    text: str, width: int, height: int, largest: int = MAX_FONT
+) -> tuple[ImageFont.FreeTypeFont, list[str]]:
+    for size in range(max(MIN_FONT, min(largest, height)), MIN_FONT - 1, -1):
         font = ImageFont.truetype(str(FONT), size)
         lines = wrap(text, font, width)
         fits_width = all(font.getlength(line) <= width for line in lines)
@@ -142,12 +180,33 @@ def fit(text: str, width: int, height: int) -> tuple[ImageFont.FreeTypeFont, lis
     return font, lines
 
 
-def draw_text(draw: ImageDraw.ImageDraw, text: str, rect: Rect) -> None:
+def layout(
+    text: str, rect: Rect, largest: int = MAX_FONT
+) -> tuple[ImageFont.FreeTypeFont, list[str]]:
+    x1, y1, x2, y2 = rect
+    return fit(text, x2 - x1, y2 - y1, largest)
+
+
+def page_layouts(
+    texts: list[str], rects: list[Rect]
+) -> list[tuple[ImageFont.FreeTypeFont, list[str]]]:
+    layouts = [layout(text, rect) for text, rect in zip(texts, rects, strict=True)]
+    if not layouts:
+        return layouts
+    cap = int(np.median([font.size for font, _ in layouts]))
+    return [
+        layout(text, rect, cap) if font.size > cap else (font, lines)
+        for text, rect, (font, lines) in zip(texts, rects, layouts, strict=True)
+    ]
+
+
+def draw_text(
+    draw: ImageDraw.ImageDraw, rect: Rect, font: ImageFont.FreeTypeFont, lines: list[str]
+) -> None:
     x1, y1, x2, y2 = rect
     width, height = x2 - x1, y2 - y1
     if width <= 0 or height <= 0:
         return
-    font, lines = fit(text, width, height)
     step = line_height(font)
     y = y1 + (height - step * len(lines)) / 2
     for line in lines:
@@ -159,11 +218,11 @@ def render(image: Image.Image, bubbles: list[dict[str, Any]]) -> Image.Image:
     rgb = np.array(image.convert("RGB"))
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY).astype(np.uint8)
     todo = [b for b in bubbles if b["kind"] != "sfx" and b["translation"].strip()]
-    inside = np.zeros_like(gray)
-    targets = [place(gray, inside, tuple(b["bbox"])) for b in todo]
+    inside, targets = place(gray, [tuple(b["bbox"]) for b in todo])
     cleaned = cv2.inpaint(rgb, ink_mask(gray, inside), INPAINT_RADIUS, cv2.INPAINT_TELEA)
     out = Image.fromarray(cleaned)
     draw = ImageDraw.Draw(out)
-    for bubble, target in zip(todo, targets, strict=True):
-        draw_text(draw, bubble["translation"], target)
+    layouts = page_layouts([b["translation"] for b in todo], targets)
+    for target, (font, lines) in zip(targets, layouts, strict=True):
+        draw_text(draw, target, font, lines)
     return out
