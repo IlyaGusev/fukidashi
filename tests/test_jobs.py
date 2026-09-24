@@ -31,14 +31,21 @@ class FakeTranslate:
     def __init__(self, behaviour: Behaviour = ok) -> None:
         self.behaviour = behaviour
         self.calls: list[tuple[str, str | None]] = []
+        self.volumes: set[str | None] = set()
         self.attempts: dict[str, int] = {}
         self.in_flight = 0
         self.max_in_flight = 0
 
     async def __call__(
-        self, page: str, options: dict[str, Any], previous: str | None, on_progress: Progress
+        self,
+        page: str,
+        options: dict[str, Any],
+        previous: str | None,
+        volume: str | None,
+        on_progress: Progress,
     ) -> dict[str, Any]:
         self.calls.append((page, previous))
+        self.volumes.add(volume)
         self.attempts[page] = self.attempts.get(page, 0) + 1
         self.in_flight += 1
         self.max_in_flight = max(self.max_in_flight, self.in_flight)
@@ -95,6 +102,14 @@ async def test_previous_page_is_passed_as_context(make_queue: MakeQueue) -> None
     queue = await make_queue(translate)
     await wait_for(queue, queue.submit("volume", "v", ["p1", "p2", "p3"], OPTIONS)["id"])
     assert sorted(translate.calls) == [("p1", None), ("p2", "p1"), ("p3", "p2")]
+    assert translate.volumes == {"v"}
+
+
+async def test_page_jobs_have_no_volume(make_queue: MakeQueue) -> None:
+    translate = FakeTranslate()
+    queue = await make_queue(translate)
+    await wait_for(queue, queue.submit("page", "p1", ["p1"], OPTIONS)["id"])
+    assert translate.volumes == {None}
 
 
 async def test_bad_output_is_retried(make_queue: MakeQueue) -> None:

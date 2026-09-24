@@ -1,0 +1,22 @@
+This is a page from a manga or comic ({{ w }}x{{ h }} pixels).
+Find every text container: speech bubbles, thought bubbles, narration boxes and sound effects.
+For each one return its bounding box in pixel coordinates, the text inside it transcribed exactly in the original language, and a natural translation into {{ lang }}.
+Reading order: right-to-left, top-to-bottom for manga; left-to-right for western comics.
+Also list the major characters on this page: anyone who speaks, is named or clearly recurs. Give the name as you write it in the {{ lang }} translation and a short description: role, appearance, way of speaking, relationships. If no name is known yet, use a short visual label as the name (e.g. "Spiky-haired man", "Girl with glasses") and describe the look in enough detail to recognise them later. If a character is already known, reuse the name exactly and return the known description extended with anything new; never drop known details. When a page reveals the real name of a character known only by a label, return the real name and put the old label in "was"; otherwise omit "was".
+{% if context %}
+
+Text from the previous page, for consistent names, terms and tone:
+{% for line in context %}
+- {{ line }}
+{% endfor %}
+{% endif %}
+{% if characters %}
+
+Known characters in this volume so far:
+{% for name, description in characters.items() %}
+- {{ name }}: {{ description }}
+{% endfor %}
+{% endif %}
+
+Answer with JSON only, no prose, in this shape:
+{"bubbles": [{"bbox": [x1, y1, x2, y2], "kind": "speech|thought|narration|sfx", "text": "...", "translation": "..."}], "characters": [{"name": "...", "description": "...", "was": "old label, only when renamed"}]}

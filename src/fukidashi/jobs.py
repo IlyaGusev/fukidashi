@@ -48,12 +48,18 @@ WHERE id = ? AND state = 'running'
   AND NOT EXISTS (SELECT 1 FROM steps WHERE job = jobs.id AND state IN {ACTIVE_SQL})
 """
 
-Translate = Callable[[str, dict[str, Any], str | None, Progress], Awaitable[dict[str, Any]]]
+Translate = Callable[
+    [str, dict[str, Any], str | None, str | None, Progress], Awaitable[dict[str, Any]]
+]
 StepKey = tuple[str, int]
 
 
 class Duplicate(Exception):
     pass
+
+
+def job_volume(job: dict[str, Any]) -> str | None:
+    return str(job["name"]) if job["kind"] == "volume" else None
 
 
 def job_options(job: dict[str, Any]) -> dict[str, Any]:
@@ -209,7 +215,7 @@ class JobQueue:
             try:
                 async with asyncio.timeout(self._step_timeout):
                     return await self._translate(
-                        page, options, previous_page, self._progress_for(key)
+                        page, options, previous_page, job_volume(job), self._progress_for(key)
                     )
             except RETRYABLE as e:
                 self._update_step(key, error=self._describe(e))

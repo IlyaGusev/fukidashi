@@ -5,28 +5,23 @@ import mimetypes
 import urllib.request
 from collections.abc import Callable
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 import openai
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from openai import AsyncOpenAI
 from PIL import Image, ImageDraw
 
 from fukidashi.settings import settings
 
-PROMPT = """\
-This is a page from a manga or comic ({w}x{h} pixels).
-Find every text container: speech bubbles, thought bubbles, narration boxes and sound effects.
-For each one return its bounding box in pixel coordinates, the text inside it transcribed exactly in the original language, and a natural translation into {lang}.
-Reading order: right-to-left, top-to-bottom for manga; left-to-right for western comics.
-{context}
-Answer with JSON only, no prose, in this shape:
-{{"bubbles": [{{"bbox": [x1, y1, x2, y2], "kind": "speech|thought|narration|sfx", "text": "...", "translation": "..."}}]}}
-"""  # noqa: E501
-
-CONTEXT = """
-Text from the previous page, for consistent names, terms and tone:
-{lines}
-"""
+PROMPTS = Environment(
+    loader=FileSystemLoader(Path(__file__).parent / "prompts"),
+    trim_blocks=True,
+    lstrip_blocks=True,
+    autoescape=False,
+    undefined=StrictUndefined,
+)
 
 Progress = Callable[[str, int], None]
 
@@ -88,7 +83,16 @@ def clean_bubble(raw: Any, w: int, h: int) -> dict[str, Any]:
         raise BadOutput(f"malformed bubble: {str(raw)[:120]}") from e
 
 
-def parse_bubbles(text: str, w: int, h: int) -> list[dict[str, Any]]:
+def clean_character(raw: Any) -> dict[str, str] | None:
+    if not isinstance(raw, dict) or not str(raw.get("name") or "").strip():
+        return None
+    character = {"name": str(raw["name"]).strip(), "description": str(raw.get("description") or "")}
+    if (was := str(raw.get("was") or "").strip()) and was != character["name"]:
+        character["was"] = was
+    return character
+
+
+def parse_answer(text: str, w: int, h: int) -> dict[str, Any]:
     try:
         data = json.loads(strip_fence(text))
     except json.JSONDecodeError as e:
@@ -96,7 +100,13 @@ def parse_bubbles(text: str, w: int, h: int) -> list[dict[str, Any]]:
     bubbles = data.get("bubbles") if isinstance(data, dict) else None
     if not isinstance(bubbles, list):
         raise BadOutput("answer has no bubbles list")
-    return [clean_bubble(b, w, h) for b in bubbles]
+    characters = data.get("characters")
+    if not isinstance(characters, list):
+        characters = []
+    return {
+        "bubbles": [clean_bubble(b, w, h) for b in bubbles],
+        "characters": [c for c in map(clean_character, characters) if c],
+    }
 
 
 async def stream_completion(
@@ -144,6 +154,7 @@ async def detect_bytes(
     thinking: bool = False,
     lang: str = settings.lang,
     context: list[str] | None = None,
+    characters: dict[str, str] | None = None,
     on_progress: Progress = no_progress,
     effort: str | None = None,
     max_tokens: int = settings.max_tokens,
@@ -151,10 +162,12 @@ async def detect_bytes(
     img = Image.open(BytesIO(data))
     w, h = img.size
     url = f"data:{mime};base64,{base64.b64encode(data).decode()}"
-    ctx = CONTEXT.format(lines="\n".join(f"- {t}" for t in context)) if context else ""
+    prompt = PROMPTS.get_template("detect.jinja").render(
+        w=w, h=h, lang=lang, context=context, characters=characters
+    )
     content = [
         {"type": "image_url", "image_url": {"url": url}},
-        {"type": "text", "text": PROMPT.format(w=w, h=h, lang=lang, context=ctx)},
+        {"type": "text", "text": prompt},
     ]
     kwargs: dict[str, Any] = {
         "model": model,
@@ -170,7 +183,7 @@ async def detect_bytes(
         optional["reasoning_effort"] = effort
     text, usage = await stream_with_optional(kwargs, optional, on_progress)
     return img, {
-        "bubbles": parse_bubbles(text, w, h),
+        **parse_answer(text, w, h),
         "size": [w, h],
         "model": model,
         "thinking": thinking,

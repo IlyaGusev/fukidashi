@@ -107,18 +107,38 @@ def list_volumes() -> list[str]:
     return sorted(json.loads(p.read_text())["name"] for p in VOLUMES.glob("*.json"))
 
 
+def volume_characters(name: str) -> dict[str, str]:
+    vol = load_volume(name)
+    if vol is None:
+        return {}
+    characters: dict[str, str] = {}
+    for page in vol["pages"]:
+        result = load_result(page["name"])
+        for c in (result or {}).get("characters", []):
+            characters.pop(c.get("was", ""), None)
+            characters[c["name"]] = c["description"]
+    return characters
+
+
 async def translate_page(
     page: str,
     options: dict[str, Any],
     previous_page: str | None = None,
+    volume: str | None = None,
     on_progress: Progress = no_progress,
 ) -> dict[str, Any]:
     path = PAGES / page
     mime = mimetypes.guess_type(path.name)[0] or "image/png"
     previous = load_result(previous_page) if previous_page else None
     context = [b["text"] for b in previous["bubbles"]] if previous else None
+    characters = volume_characters(volume) if volume else None
     _, result = await detect_bytes(
-        path.read_bytes(), mime, **options, context=context, on_progress=on_progress
+        path.read_bytes(),
+        mime,
+        **options,
+        context=context,
+        characters=characters,
+        on_progress=on_progress,
     )
     write_json(result_path(page), result)
     return result

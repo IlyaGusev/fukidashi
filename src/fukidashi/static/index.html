@@ -134,6 +134,9 @@
   #empty { padding: 40px 20px; color: var(--muted); text-align: center; }
   details { border-top: 1px solid var(--border); }
   summary { padding: 10px 16px; cursor: pointer; color: var(--muted); font-size: 12px; user-select: none; }
+  #castlist { margin: 0; padding: 0 16px 12px; font-size: 13px; }
+  #castlist dt { font-weight: 600; margin-top: 8px; }
+  #castlist dd { margin: 2px 0 0; color: var(--muted); }
   pre { margin: 0; padding: 12px 16px; max-height: 240px; overflow: auto; font: 11px/1.4 "JetBrains Mono", monospace; color: var(--muted); }
   input[type=file] { display: none; }
   .hidden { display: none !important; }
@@ -173,6 +176,7 @@
     <div id="status">Pick a page to start.</div>
     <div id="queue"></div>
     <ul id="list"><li id="empty">No boxes yet.</li></ul>
+    <details id="cast" class="hidden" open><summary>Characters</summary><dl id="castlist"></dl></details>
     <details><summary>Raw JSON</summary><pre id="raw"></pre></details>
   </aside>
 </main>
@@ -185,7 +189,7 @@ const drop = $("drop"), img = $("img"), stage = $("stage"), list = $("list"), ra
       typeset = $("typeset");
 const COLORS = { speech: "var(--speech)", thought: "var(--thought)", narration: "var(--narration)", sfx: "var(--sfx)" };
 const ACTIVE = ["queued", "running"];
-let tab = "page", current = null, result = null, volume = null, jobs = [], pollTimer = 0, notice = null, shownFinished = null;
+let tab = "page", current = null, result = null, volume = null, jobs = [], pollTimer = 0, notice = null, shownFinished = null, shownCast = null;
 let stepIndex = new Map();
 
 fetch("/models").then(r => r.json()).then(d => {
@@ -335,6 +339,7 @@ function switchTab(t) {
   $("gallery").classList.toggle("hidden", t !== "page");
   $("volbar").classList.toggle("hidden", t !== "volume");
   $("volstrip").classList.toggle("hidden", t !== "volume");
+  $("cast").classList.toggle("hidden", t !== "volume");
   drop.querySelector("strong").textContent = t === "page" ? "Drop a comic page here" : "Drop the pages of a volume here";
   current = null; clear();
   drop.style.display = ""; stage.style.display = "none";
@@ -402,8 +407,18 @@ async function loadVolume(name) {
   setVolume(await (await fetch(`/volumes/${encodeURIComponent(name)}`)).json());
 }
 
+async function loadCharacters() {
+  const dl = $("castlist");
+  dl.innerHTML = "";
+  if (!volume) return;
+  const { characters } = await (await fetch(`/volumes/${encodeURIComponent(volume.name)}/characters`)).json();
+  characters.forEach(c => dl.insertAdjacentHTML("beforeend", `<dt>${esc(c.name)}</dt><dd>${esc(c.description)}</dd>`));
+  if (!characters.length) dl.innerHTML = '<dd class="hint">No characters yet.</dd>';
+}
+
 function setVolume(v) {
   volume = v;
+  loadCharacters();
   $("voladd").disabled = !v;
   const s = $("volstrip");
   s.innerHTML = "";
@@ -426,6 +441,8 @@ async function poll() {
     for (const job of jobs) for (const step of job.steps) if (!stepIndex.has(step.page)) stepIndex.set(step.page, { job, step });
     const done = stepOf(current)?.step;
     if (done?.state === "done" && done.finished !== shownFinished) select(current);
+    const cast = volume && latest("volume", volume.name)?.steps.filter(s => s.state === "done").length;
+    if (cast !== shownCast) { shownCast = cast; loadCharacters(); }
   } catch (err) {
     note(`Server unreachable: ${err.message}`, { error: true });
   }
