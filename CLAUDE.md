@@ -52,7 +52,12 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
   translation with that memory), checkpoints after every page, records a failed page in its stats
   and snapshot instead of silently keeping the old memory, then runs a second pass with the final
   memory. `scripts/translate_book.py` runs it on an OpenMantra book (`--first`, `--count`, `--seed`
-  a previous volume JSON) and writes `out/books/<name>.json`.
+  a previous volume JSON, `--seed_after` a page of it instead of its last) and writes
+  `out/books/<name>.json`.
+- `src/fukidashi/compare.py` and `scripts/compare_books.py`: score volume JSONs on the pages they
+  share: starting confidence, glossary adherence (names kept as the run's own final glossary),
+  agreement with the professional renderings of glossary terms, and chrF vs the reference, each
+  also on the first `--first` pages. Needs the `bench` extra.
 - `src/fukidashi/web.py`: FastAPI routes only.
 - `tests/test_jobs.py`: queue tests with a fake translator. Run `uv run pytest`.
 - `src/fukidashi/static/index.html`: the UI.

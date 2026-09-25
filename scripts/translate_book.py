@@ -76,9 +76,12 @@ def load_book(
     return pages, meta
 
 
-def load_seed(path: str) -> Memory:
-    volume = json.loads(Path(path).read_text(encoding="utf-8"))
-    return Memory.model_validate(volume["snapshots"][-1])
+def load_seed(path: str, after: int | None) -> Memory:
+    snapshots = json.loads(Path(path).read_text(encoding="utf-8"))["snapshots"]
+    by_page = {s["afterPage"]: s for s in snapshots}
+    if after is not None and after not in by_page:
+        raise SystemExit(f"{path} has no memory snapshot after page {after}")
+    return Memory.model_validate(snapshots[-1] if after is None else by_page[after])
 
 
 def summary(result: dict[str, Any]) -> dict[str, Any]:
@@ -108,6 +111,7 @@ def main(
     model: str = settings.model,
     lang: str = settings.lang,
     seed: str | None = None,
+    seed_after: int | None = None,
     name: str | None = None,
 ) -> None:
     model_slug = re.sub(r"[^\w.-]", "_", model.split("/")[-1])
@@ -120,7 +124,7 @@ def main(
             OUT / f"{name}.checkpoint.json",
             model,
             lang,
-            load_seed(seed) if seed else None,
+            load_seed(seed, seed_after) if seed else None,
             log=lambda line: print(line, flush=True),
         )
     )
@@ -136,6 +140,7 @@ def main(
         "summary": summary(result),
         "models": {"detect": "OpenMantra boxes", "memory": model, "translate": model},
         "seededFrom": seed,
+        "seededAfterPage": seed_after,
     }
     out = OUT / f"{name}.json"
     out.write_text(json.dumps(volume, ensure_ascii=False, indent=1), encoding="utf-8")
