@@ -144,6 +144,20 @@ def test_view_stays_within_budget_for_a_sixty_page_book() -> None:
     assert all(f"{t.source} -> {t.target}" in views[-1] for t in memory.glossary)
 
 
+def test_view_keeps_this_pages_terms_when_the_glossary_outgrows_the_budget() -> None:
+    memory = Memory()
+    for page in range(1, 401):
+        memory = apply_patch(memory, parse_patch(growing_patch(page)), page)
+    view = memory_view(memory, BUDGET, page_text="用語400_2 と 用語250_1")
+    assert len(memory.glossary) == 1200
+    assert len(view) <= BUDGET
+    assert "- 用語400_2 -> term 400.2" in view
+    assert "- 用語250_1 -> term 250.1" in view
+    assert "- 用語1_0 -> term 1.0" in view
+    assert "- 用語399_0 ->" not in view
+    assert " of 1200 not shown" in view
+
+
 def test_carry_over_keeps_the_cast_and_drops_page_state() -> None:
     memory = patched(
         Memory(),
@@ -188,6 +202,18 @@ async def test_update_memory_applies_the_patch_and_returns_speakers(
     assert update.memory.glossary[0].target == "Meru"
     assert update.speakers == {"p1b1": "Meru"}
     assert "p1b1 | 'メル'" in fake.prompts[0]
+
+
+async def test_memory_prompt_shows_the_pages_terms_from_a_large_glossary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeModel([("{}", {})])
+    monkeypatch.setattr(detect, "stream_completion", fake)
+    terms = [{"source": f"名{i:04d}", "target": f"name {i}"} for i in range(2000)]
+    memory = patched(Memory(), 1, glossary=terms)
+    await update_memory(memory, 2, b"img", "image/jpeg", [{"id": "p2b1", "text": "名1999だ"}])
+    assert "- 名1999 -> name 1999" in fake.prompts[0]
+    assert "- 名1998 ->" not in fake.prompts[0]
 
 
 async def test_seeded_memory_is_labelled_as_carried_over(monkeypatch: pytest.MonkeyPatch) -> None:

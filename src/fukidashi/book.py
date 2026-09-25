@@ -9,6 +9,7 @@ from fukidashi.jobs import RETRYABLE
 from fukidashi.memory import (
     Memory,
     MemoryUpdate,
+    box_text,
     carry_over,
     complete_json,
     image_part,
@@ -95,7 +96,7 @@ async def translate_boxes(
     prompt = TRANSLATE_PROMPT.format(
         lang=lang,
         pass_note=SECOND_PASS_NOTE if second_pass else FIRST_PASS_NOTE,
-        memory=memory_view(memory),
+        memory=memory_view(memory, page_text=box_text(page["boxes"])),
         first_pass_column=" | first pass" if second_pass else "",
         boxes=box_lines(page["boxes"], second_pass),
         reason_rule=SECOND_PASS_RULE if second_pass else FIRST_PASS_RULE,
@@ -120,12 +121,12 @@ async def with_retries[T](
     raise ValueError("settings.attempts must be at least 1")
 
 
-def page_stats(memory: Memory, update: MemoryUpdate | None) -> dict[str, Any]:
+def page_stats(memory: Memory, update: MemoryUpdate | None, page: BookPage) -> dict[str, Any]:
     return {
         "page": memory.after_page,
         "confidence": memory.confidence,
         "storedChars": len(json.dumps(memory.dump(), ensure_ascii=False)),
-        "viewChars": len(memory_view(memory)),
+        "viewChars": len(memory_view(memory, page_text=box_text(page["boxes"]))),
         "patchChars": update.patch_chars if update else 0,
         "characters": len(memory.characters),
         "glossary": len(memory.glossary),
@@ -253,7 +254,7 @@ async def translate_book(
             page["boxes"] = saved
             continue
         memory, update = await read_page(page, memory, model, lang, log, backoff)
-        stats = page_stats(memory, update)
+        stats = page_stats(memory, update, page)
         if update is not None:
             add_usage(state["usage"], update.usage)
         translated = await first_pass(page, memory, model, lang, log, backoff)

@@ -7,6 +7,7 @@ import pytest
 
 from fukidashi import detect
 from fukidashi.book import BookPage, translate_book
+from fukidashi.memory import Memory, Term
 from fukidashi.settings import settings
 
 PAGES = 45
@@ -31,11 +32,13 @@ class FakeModel:
         self.broken_pages = broken_pages
         self.memory_calls: list[int] = []
         self.translate_calls = 0
+        self.prompts: list[str] = []
 
     async def __call__(
         self, kwargs: dict[str, Any], on_progress: Any
     ) -> tuple[str, dict[str, Any]]:
         prompt = kwargs["messages"][0]["content"][-1]["text"]
+        self.prompts.append(prompt)
         page_match = PAGE_NUMBER.search(prompt)
         if page_match:
             page = int(page_match.group(1))
@@ -107,3 +110,19 @@ async def test_rerun_resumes_from_the_checkpoint(model: Any, tmp_path: Path) -> 
     await translate_book(pages, checkpoint, log=lambda line: None, backoff=0)
     assert fake.memory_calls == [4, 5]
     assert pages[0]["boxes"][0]["firstPassTranslation"] == "line p1b1"
+
+
+async def test_every_prompt_shows_the_pages_terms_from_a_large_seed(
+    model: Any, tmp_path: Path
+) -> None:
+    fake = model()
+    seed = Memory(glossary=[Term(source=f"名{i:04d}", target=f"name {i}") for i in range(2000)])
+    page = BookPage(
+        index=1, image=b"img", mime="image/jpeg", boxes=[{"id": "p1b1", "text": "名1999"}]
+    )
+    result = await translate_book(
+        [page], tmp_path / "ck.json", seed=seed, log=lambda line: None, backoff=0
+    )
+    assert len(fake.prompts) == 3
+    assert all("- 名1999 -> name 1999" in prompt for prompt in fake.prompts)
+    assert result["stats"][0]["viewChars"] <= settings.memory_chars

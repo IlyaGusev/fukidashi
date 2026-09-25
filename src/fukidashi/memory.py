@@ -145,6 +145,7 @@ class Patch(BaseModel):
 
 
 class ViewLevel(NamedTuple):
+    whole_glossary: bool
     glossary_notes: bool
     description_chars: int
     thread_note_chars: int
@@ -152,12 +153,11 @@ class ViewLevel(NamedTuple):
 
 
 VIEW_LEVELS = (
-    ViewLevel(glossary_notes=True, description_chars=300, thread_note_chars=200, open_questions=20),
-    ViewLevel(
-        glossary_notes=False, description_chars=150, thread_note_chars=120, open_questions=12
-    ),
-    ViewLevel(glossary_notes=False, description_chars=100, thread_note_chars=60, open_questions=6),
-    ViewLevel(glossary_notes=False, description_chars=60, thread_note_chars=0, open_questions=0),
+    ViewLevel(True, True, 300, 200, 20),
+    ViewLevel(True, False, 150, 120, 12),
+    ViewLevel(False, False, 150, 120, 12),
+    ViewLevel(False, False, 100, 60, 6),
+    ViewLevel(False, False, 60, 0, 0),
 )
 
 
@@ -222,8 +222,12 @@ def upsert[E: BaseModel](
     return list(merged.values())
 
 
+def compact(text: str) -> str:
+    return "".join(text.split())
+
+
 def term_key(term: Term) -> str:
-    return "".join(term.source.split())
+    return compact(term.source)
 
 
 def entry_id(entry: Character | Thread | Question) -> str:
@@ -310,7 +314,7 @@ def page_list(pages: list[int]) -> str:
     return ", ".join(f"p{p}" for p in pages) or "earlier chapter"
 
 
-def render_view(memory: Memory, level: ViewLevel) -> str:
+def story_lines(memory: Memory, level: ViewLevel) -> list[str]:
     lines = [
         f"Summary: {memory.summary or '(nothing yet)'}",
         "Characters (id | name | who | voice):",
@@ -320,13 +324,12 @@ def render_view(memory: Memory, level: ViewLevel) -> str:
         f"{clip(c.voice, level.description_chars)}"
         for c in memory.characters
     ]
-    lines.append("Glossary (source -> target):")
-    lines += [
-        f"- {t.source} -> {t.target}" + (f" ({t.note})" if level.glossary_notes and t.note else "")
-        for t in memory.glossary
-    ]
+    return lines
+
+
+def open_lines(memory: Memory, level: ViewLevel) -> list[str]:
     open_threads = [t for t in memory.threads if t.status == "open"]
-    lines.append("Open threads (id | pages | note):")
+    lines = ["Open threads (id | pages | note):"]
     lines += [
         f"- {t.id} | {page_list(t.pages)} | {clip(t.note, level.thread_note_chars)}"
         for t in open_threads
@@ -338,16 +341,52 @@ def render_view(memory: Memory, level: ViewLevel) -> str:
     shown = open_questions[-level.open_questions :] if level.open_questions else []
     lines.append(f"Open questions ({len(shown)} most recent of {len(open_questions)}):")
     lines += [f"- {q.id}: {q.question}" for q in shown]
-    return "\n".join(lines)
+    return lines
 
 
-def memory_view(memory: Memory, budget: int = settings.memory_chars) -> str:
+def term_line(term: Term, notes: bool) -> str:
+    return f"- {term.source} -> {term.target}" + (f" ({term.note})" if notes and term.note else "")
+
+
+def partial_glossary_title(hidden: int, total: int) -> str:
+    return f"Glossary (source -> target; terms on this page first, {hidden} of {total} not shown):"
+
+
+def glossary_lines(glossary: list[Term], level: ViewLevel, page_text: str, room: int) -> list[str]:
+    lines = [term_line(t, level.glossary_notes) for t in glossary]
+    if level.whole_glossary:
+        return ["Glossary (source -> target):", *lines]
+    page = compact(page_text)
+    kept = {i for i, t in enumerate(glossary) if term_key(t) and term_key(t) in page}
+    used = len(partial_glossary_title(len(glossary), len(glossary))) + 1
+    used += sum(len(lines[i]) + 1 for i in kept)
+    for i, line in enumerate(lines):
+        if i not in kept and used + len(line) + 1 <= room:
+            kept.add(i)
+            used += len(line) + 1
+    title = partial_glossary_title(len(glossary) - len(kept), len(glossary))
+    return [title, *(lines[i] for i in sorted(kept))]
+
+
+def render_view(memory: Memory, level: ViewLevel, budget: int, page_text: str) -> str:
+    story = story_lines(memory, level)
+    rest = open_lines(memory, level)
+    room = budget - len("\n".join(story + rest))
+    glossary = glossary_lines(memory.glossary, level, page_text, room)
+    return "\n".join(story + glossary + rest)
+
+
+def memory_view(memory: Memory, budget: int = settings.memory_chars, page_text: str = "") -> str:
     view = ""
     for level in VIEW_LEVELS:
-        view = render_view(memory, level)
+        view = render_view(memory, level, budget, page_text)
         if len(view) <= budget:
             return view
     return view
+
+
+def box_text(boxes: list[dict[str, Any]]) -> str:
+    return " ".join(str(b.get("text") or "") for b in boxes)
 
 
 def patch_prompt(memory: Memory, page: int, boxes: list[dict[str, Any]], lang: str) -> str:
@@ -356,7 +395,7 @@ def patch_prompt(memory: Memory, page: int, boxes: list[dict[str, Any]], lang: s
     return MEMORY_PROMPT.format(
         lang=lang,
         memory_title=title.format(page=page),
-        memory=memory_view(memory),
+        memory=memory_view(memory, page_text=box_text(boxes)),
         page=page,
         boxes="\n".join(f"- {b['id']} | {b['text']!r}" for b in boxes) or "(no text)",
     )

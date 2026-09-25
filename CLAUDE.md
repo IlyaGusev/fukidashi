@@ -46,8 +46,9 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
   a PATCH (new or changed characters, glossary, threads, questions, plus speakers), never the whole
   memory, and `apply_patch` merges it by key, so an entry the model leaves out is kept. Fields are
   clipped on merge, and `memory_view` renders the memory for prompts within
-  `FUKIDASHI_MEMORY_CHARS` (default 16000) by stepping down `VIEW_LEVELS`. `carry_over` seeds the
-  next chapter with the cast, glossary and open threads.
+  `FUKIDASHI_MEMORY_CHARS` (default 16000) by stepping down `VIEW_LEVELS`. Once the whole glossary
+  no longer fits, the view shows the terms found in the current page's text, then the earliest
+  terms that fit. `carry_over` seeds the next chapter with the cast, glossary and open threads.
 - `src/fukidashi/book.py`: `translate_book` reads pages in order (memory update, then first-pass
   translation with that memory), checkpoints after every page, records a failed page in its stats
   and snapshot instead of silently keeping the old memory, then runs a second pass with the final
