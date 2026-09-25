@@ -42,6 +42,17 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
   the box, erases the ink with OpenCV inpainting and draws the translation in Comic Neue at the largest
   size that fits the largest rectangle in that interior that holds the box center. Skips `sfx`. `store.render_page` caches the PNG under `data/rendered/`;
   `GET /pages/{name}/rendered` serves it and the Typeset toggle in the UI shows it.
+- `src/fukidashi/memory.py`: story memory for whole-book translation. Per page the model returns
+  a PATCH (new or changed characters, glossary, threads, questions, plus speakers), never the whole
+  memory, and `apply_patch` merges it by key, so an entry the model leaves out is kept. Fields are
+  clipped on merge, and `memory_view` renders the memory for prompts within
+  `FUKIDASHI_MEMORY_CHARS` (default 16000) by stepping down `VIEW_LEVELS`. `carry_over` seeds the
+  next chapter with the cast, glossary and open threads.
+- `src/fukidashi/book.py`: `translate_book` reads pages in order (memory update, then first-pass
+  translation with that memory), checkpoints after every page, records a failed page in its stats
+  and snapshot instead of silently keeping the old memory, then runs a second pass with the final
+  memory. `scripts/translate_book.py` runs it on an OpenMantra book (`--first`, `--count`, `--seed`
+  a previous volume JSON) and writes `out/books/<name>.json`.
 - `src/fukidashi/web.py`: FastAPI routes only.
 - `tests/test_jobs.py`: queue tests with a fake translator. Run `uv run pytest`.
 - `src/fukidashi/static/index.html`: the UI.

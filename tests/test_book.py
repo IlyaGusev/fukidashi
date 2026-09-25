@@ -1,0 +1,109 @@
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from fukidashi import detect
+from fukidashi.book import BookPage, translate_book
+from fukidashi.settings import settings
+
+PAGES = 45
+BOX_ID = re.compile(r"^- (p\d+b\d+) \|", re.MULTILINE)
+PAGE_NUMBER = re.compile(r"Page (\d+) is attached")
+
+
+def book(pages: int = PAGES) -> list[BookPage]:
+    return [
+        BookPage(
+            index=n,
+            image=b"img",
+            mime="image/jpeg",
+            boxes=[{"id": f"p{n}b{i}", "text": f"せりふ{n}-{i}"} for i in (1, 2)],
+        )
+        for n in range(1, pages + 1)
+    ]
+
+
+class FakeModel:
+    def __init__(self, broken_pages: frozenset[int] = frozenset()) -> None:
+        self.broken_pages = broken_pages
+        self.memory_calls: list[int] = []
+        self.translate_calls = 0
+
+    async def __call__(
+        self, kwargs: dict[str, Any], on_progress: Any
+    ) -> tuple[str, dict[str, Any]]:
+        prompt = kwargs["messages"][0]["content"][-1]["text"]
+        page_match = PAGE_NUMBER.search(prompt)
+        if page_match:
+            page = int(page_match.group(1))
+            self.memory_calls.append(page)
+            if page in self.broken_pages:
+                return '{"glossary": [', {"completion_tokens": 10}
+            return json.dumps(self.patch(page, BOX_ID.findall(prompt))), {"completion_tokens": 50}
+        self.translate_calls += 1
+        translations = [{"id": i, "translation": f"line {i}"} for i in BOX_ID.findall(prompt)]
+        return json.dumps({"translations": translations}), {"completion_tokens": 20}
+
+    def patch(self, page: int, box_ids: list[str]) -> dict[str, Any]:
+        return {
+            "confidence": min(100, 20 + page * 2),
+            "summary": "the story " * 80,
+            "characters": [{"id": f"c_{page % 4}", "description": f"seen on p{page} " * 50}],
+            "glossary": [
+                {"source": f"語{page}_{i}", "target": f"word {page}.{i}", "note": "n " * 80}
+                for i in range(4)
+            ],
+            "threads": [{"id": f"t_{page}", "note": "thread " * 40, "pages": [page]}],
+            "questions": [{"id": f"q_{page}", "question": "why " * 40}],
+            "changes": [f"learned something on p{page}"],
+            "speakers": {box_id: "Meru" for box_id in box_ids},
+        }
+
+
+@pytest.fixture
+def model(monkeypatch: pytest.MonkeyPatch) -> Any:
+    def install(broken_pages: frozenset[int] = frozenset()) -> FakeModel:
+        fake = FakeModel(broken_pages)
+        monkeypatch.setattr(detect, "stream_completion", fake)
+        return fake
+
+    return install
+
+
+async def test_memory_updates_on_every_page_of_a_long_book(model: Any, tmp_path: Path) -> None:
+    model()
+    pages = book()
+    result = await translate_book(pages, tmp_path / "ck.json", log=lambda line: None, backoff=0)
+    stats = result["stats"]
+    assert [s["page"] for s in stats] == list(range(1, PAGES + 1))
+    assert not any(s["memoryFailed"] or s["translateFailed"] for s in stats)
+    assert max(s["viewChars"] for s in stats) <= settings.memory_chars
+    assert stats[-1]["glossary"] == 4 * PAGES
+    assert pages[-1]["boxes"][0]["speaker"] == "Meru"
+    assert pages[-1]["boxes"][0]["translation"] == f"line p{PAGES}b1"
+
+
+async def test_failed_page_is_recorded_and_the_next_page_moves_on(
+    model: Any, tmp_path: Path
+) -> None:
+    fake = model(frozenset({2}))
+    result = await translate_book(book(4), tmp_path / "ck.json", log=lambda line: None, backoff=0)
+    stats = result["stats"]
+    assert [s["memoryFailed"] for s in stats] == [False, True, False, False]
+    assert fake.memory_calls.count(2) == settings.attempts
+    assert "failed" in result["snapshots"][1]["changes"][0]
+    assert result["snapshots"][2]["afterPage"] == 3
+
+
+async def test_rerun_resumes_from_the_checkpoint(model: Any, tmp_path: Path) -> None:
+    model()
+    checkpoint = tmp_path / "ck.json"
+    await translate_book(book(3), checkpoint, log=lambda line: None, backoff=0)
+    fake = model()
+    pages = book(5)
+    await translate_book(pages, checkpoint, log=lambda line: None, backoff=0)
+    assert fake.memory_calls == [4, 5]
+    assert pages[0]["boxes"][0]["firstPassTranslation"] == "line p1b1"

@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     model: str = "moonshotai/Kimi-K3"
     lang: str = "English"
     max_tokens: int = 65536
+    memory_chars: int = 16000
     stall_timeout: float = 60
     workers: int = 2
     attempts: int = 3
