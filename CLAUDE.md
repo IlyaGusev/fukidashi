@@ -57,6 +57,9 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
   `scripts/translate_book.py` runs it on an OpenMantra book (`--first`, `--count`, `--seed` a
   previous volume JSON, `--seed_after` a page of it instead of its last, `--memory=False`,
   `--recent_pages N`, `--second_pass=False`) and writes `out/books/<name>.json`.
+- `scripts/audit_book.py`: for one volume JSON, lists glossary terms the translations do not
+  always render as the glossary says, and the lines with the lowest sentence chrF. Writes
+  `out/audit/<name>.md`. Needs the `bench` extra.
 - `scripts/paper_score.py`: pooled, case-sensitive corpus chrF over volume JSONs, the protocol of
   Lippmann et al. (COLING 2025), whose best OpenMantra test-set score (boureisougi, rasetugari,
   tencho_isoro) is 36.8 with GPT-4 Turbo. Needs the `bench` extra.
