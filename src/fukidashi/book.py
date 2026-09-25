@@ -3,7 +3,7 @@ import json
 from collections.abc import Awaitable, Callable
 from functools import partial
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, NamedTuple, TypedDict
 
 from fukidashi.jobs import RETRYABLE
 from fukidashi.memory import (
@@ -24,7 +24,7 @@ Translate the text boxes of this manga page into {lang} for a published edition.
 
 Story memory:
 {memory}
-
+{recent}
 Text boxes (id | speaker | source text | max_chars{first_pass_column}):
 {boxes}
 
@@ -49,7 +49,18 @@ SECOND_PASS_RULE = (
 )
 SECOND_PASS_BATCH = 3
 
+RECENT_TITLE = "Lines of the previous pages (id | speaker | source text | translation):"
+
 Log = Callable[[str], None]
+
+
+class BookOptions(NamedTuple):
+    memory: bool = True
+    recent_pages: int = 0
+    second_pass: bool = True
+
+
+DEFAULT_OPTIONS = BookOptions()
 
 
 class BookPage(TypedDict):
@@ -73,6 +84,15 @@ def box_lines(boxes: list[dict[str, Any]], second_pass: bool) -> str:
     return "\n".join(rows)
 
 
+def recent_lines(pages: list[BookPage]) -> str:
+    rows = [
+        f"- {b['id']} | {b.get('speaker')} | {b['text']!r} | {b.get('translation')!r}"
+        for page in pages
+        for b in page["boxes"]
+    ]
+    return "\n".join([RECENT_TITLE, *rows, ""]) if rows else ""
+
+
 def translation_items(result: Any) -> list[dict[str, Any]]:
     items: Any = result.get("translations") if isinstance(result, dict) else result
     if isinstance(items, list):
@@ -89,7 +109,12 @@ def add_usage(total: dict[str, int], usage: dict[str, Any]) -> None:
 
 
 async def translate_boxes(
-    page: BookPage, memory: Memory, model: str, lang: str, second_pass: bool
+    page: BookPage,
+    memory: Memory,
+    model: str,
+    lang: str,
+    second_pass: bool,
+    recent: list[BookPage],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     if not page["boxes"]:
         return {}, {}
@@ -97,6 +122,7 @@ async def translate_boxes(
         lang=lang,
         pass_note=SECOND_PASS_NOTE if second_pass else FIRST_PASS_NOTE,
         memory=memory_view(memory, page_text=box_text(page["boxes"])),
+        recent=recent_lines(recent),
         first_pass_column=" | first pass" if second_pass else "",
         boxes=box_lines(page["boxes"], second_pass),
         reason_rule=SECOND_PASS_RULE if second_pass else FIRST_PASS_RULE,
@@ -121,7 +147,9 @@ async def with_retries[T](
     raise ValueError("settings.attempts must be at least 1")
 
 
-def page_stats(memory: Memory, update: MemoryUpdate | None, page: BookPage) -> dict[str, Any]:
+def page_stats(
+    memory: Memory, update: MemoryUpdate | None, page: BookPage, memory_failed: bool
+) -> dict[str, Any]:
     return {
         "page": memory.after_page,
         "confidence": memory.confidence,
@@ -131,7 +159,7 @@ def page_stats(memory: Memory, update: MemoryUpdate | None, page: BookPage) -> d
         "characters": len(memory.characters),
         "glossary": len(memory.glossary),
         "openQuestions": sum(1 for q in memory.questions if q.is_open),
-        "memoryFailed": update is None,
+        "memoryFailed": memory_failed,
         "translateFailed": False,
     }
 
@@ -179,9 +207,15 @@ async def read_page(
 
 
 async def first_pass(
-    page: BookPage, memory: Memory, model: str, lang: str, log: Log, backoff: float
+    page: BookPage,
+    memory: Memory,
+    recent: list[BookPage],
+    model: str,
+    lang: str,
+    log: Log,
+    backoff: float,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]] | None:
-    call = partial(translate_boxes, page, memory, model, lang, False)
+    call = partial(translate_boxes, page, memory, model, lang, False, recent)
     try:
         return await with_retries(call, f"translate p{page['index']}", log, backoff)
     except RETRYABLE as e:
@@ -218,7 +252,7 @@ async def second_pass(
     usage: dict[str, int] = {}
 
     async def revise(page: BookPage) -> int:
-        call = partial(translate_boxes, page, memory, model, lang, True)
+        call = partial(translate_boxes, page, memory, model, lang, True, [])
         try:
             translations, page_usage = await with_retries(
                 call, f"pass 2 p{page['index']}", log, backoff
@@ -245,19 +279,27 @@ async def translate_book(
     seed: Memory | None = None,
     log: Log = print,
     backoff: float = 2,
+    options: BookOptions = DEFAULT_OPTIONS,
 ) -> dict[str, Any]:
     state = load_checkpoint(checkpoint)
     memory = starting_memory(state, seed)
+    done: list[BookPage] = []
     for page in pages:
+        recent = done[-options.recent_pages :] if options.recent_pages else []
+        done.append(page)
         saved = state["boxes"].get(str(page["index"]))
         if saved is not None:
             page["boxes"] = saved
             continue
-        memory, update = await read_page(page, memory, model, lang, log, backoff)
-        stats = page_stats(memory, update, page)
+        if options.memory:
+            memory, update = await read_page(page, memory, model, lang, log, backoff)
+        else:
+            memory, update = memory.model_copy(update={"after_page": page["index"]}), None
+        memory_failed = options.memory and update is None
+        stats = page_stats(memory, update, page, memory_failed)
         if update is not None:
             add_usage(state["usage"], update.usage)
-        translated = await first_pass(page, memory, model, lang, log, backoff)
+        translated = await first_pass(page, memory, recent, model, lang, log, backoff)
         stats["translateFailed"] = translated is None
         translations, usage = translated or ({}, {})
         if translated is not None:
@@ -271,10 +313,13 @@ async def translate_book(
             f"p{page['index']:>3} conf {memory.confidence:>3} view {stats['viewChars']:>6} "
             f"stored {stats['storedChars']:>6} patch {stats['patchChars']:>5} "
             f"glossary {stats['glossary']:>3}"
-            + (" MEMORY FAILED" if update is None else "")
+            + (" MEMORY FAILED" if memory_failed else "")
             + (" TRANSLATE FAILED" if translated is None else "")
         )
-    revised, pass2_usage = await second_pass(pages, memory, model, lang, log, backoff)
+    revised = 0
+    pass2_usage: dict[str, int] = {}
+    if options.second_pass:
+        revised, pass2_usage = await second_pass(pages, memory, model, lang, log, backoff)
     usage = dict(state["usage"])
     for field, value in pass2_usage.items():
         usage[field] = usage.get(field, 0) + value

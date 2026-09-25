@@ -9,7 +9,7 @@ from typing import Any
 import fire
 from PIL import Image
 
-from fukidashi.book import BookPage, translate_book
+from fukidashi.book import BookOptions, BookPage, translate_book
 from fukidashi.detect import read_source
 from fukidashi.memory import Memory
 from fukidashi.settings import settings
@@ -84,6 +84,15 @@ def load_seed(path: str, after: int | None) -> Memory:
     return Memory.model_validate(snapshots[-1] if after is None else by_page[after])
 
 
+def run_suffix(seed: str | None, options: BookOptions) -> str:
+    return (
+        ("_seeded" if seed else "")
+        + ("" if options.memory else "_nomemory")
+        + (f"_recent{options.recent_pages}" if options.recent_pages else "")
+        + ("" if options.second_pass else "_nopass2")
+    )
+
+
 def summary(result: dict[str, Any]) -> dict[str, Any]:
     stats = result["stats"]
     return {
@@ -113,9 +122,13 @@ def main(
     seed: str | None = None,
     seed_after: int | None = None,
     name: str | None = None,
+    memory: bool = True,
+    recent_pages: int = 0,
+    second_pass: bool = True,
 ) -> None:
+    options = BookOptions(memory, recent_pages, second_pass)
     model_slug = re.sub(r"[^\w.-]", "_", model.split("/")[-1])
-    name = name or f"{book}_{first}-{count or 'end'}_{model_slug}" + ("_seeded" if seed else "")
+    name = name or f"{book}_{first}-{count or 'end'}_{model_slug}" + run_suffix(seed, options)
     pages, meta = load_book(book, first, count)
     print(f"{book}: {len(pages)} pages from page {first + 1}, model {model}", flush=True)
     result = asyncio.run(
@@ -126,6 +139,7 @@ def main(
             lang,
             load_seed(seed, seed_after) if seed else None,
             log=lambda line: print(line, flush=True),
+            options=options,
         )
     )
     volume = {
@@ -141,6 +155,7 @@ def main(
         "models": {"detect": "OpenMantra boxes", "memory": model, "translate": model},
         "seededFrom": seed,
         "seededAfterPage": seed_after,
+        "options": options._asdict(),
     }
     out = OUT / f"{name}.json"
     out.write_text(json.dumps(volume, ensure_ascii=False, indent=1), encoding="utf-8")
