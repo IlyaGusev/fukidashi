@@ -33,9 +33,11 @@ that this page changes. Every entry you leave out is kept exactly as it is.
 - characters: {{"id": "c_short", "name": "", "description": "", "voice": "", "firstSeenPage": {page}}}.
   description is who they are now (look, role, relationships) in at most 300 characters, not a
   log of pages. voice is how they talk, with one example phrase. Reuse existing ids.
-- glossary: {{"source": "", "target": "", "note": ""}} for names, invented terms, sound effects
-  and catchphrases that need one consistent {lang} rendering. Keep existing targets unless this
-  page proves them wrong.
+- glossary: {{"source": "", "target": "", "note": ""}} only for words that must read the same
+  every time: names of people, places, groups, techniques and items, invented terms, titles used
+  as names, and a character's recurring catchphrase. Never everyday words, pronouns, greetings,
+  interjections, laughs, sound effects, verb endings or one-off phrases: the translator renders
+  those fresh in context. Keep existing targets unless this page proves them wrong.
 - threads: {{"id": "t_short", "note": "", "status": "open|paid_off", "pages": [{page}]}}.
 - questions: a new ambiguity is {{"id": "q_short", "question": ""}}. To resolve an open question,
   send its id with "answer" and "resolvedOnPage": {page}.

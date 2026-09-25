@@ -29,8 +29,10 @@ Text boxes (id | speaker | source text | max_chars{first_pass_column}):
 {boxes}
 
 Keep each character's voice from the memory, use the glossary renderings exactly, keep jokes
-working in {lang} and stay within max_chars so the text fits the bubble. Sound effects become
-natural {lang} sound effects. memory_refs are the ids of the memory entries you relied on.
+working in {lang} and stay within max_chars so the text fits the bubble. Sound effects, laughs,
+gasps and interjections become the ones a {lang} letterer would write (in English: ふふっ -> heh
+heh, キヒヒッ -> hee hee hee, くっ -> ngh), never romanized Japanese. memory_refs are the ids of
+the memory entries you relied on.
 {reason_rule}
 Answer JSON only:
 {{"translations": [{{"id": "", "translation": "", "reason": null, "memory_refs": []}}]}}
