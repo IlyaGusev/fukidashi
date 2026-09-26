@@ -52,7 +52,8 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
 - `src/fukidashi/book.py`: `translate_book` reads pages in order (memory update, then first-pass
   translation with that memory), checkpoints after every page, records a failed page in its stats
   and snapshot instead of silently keeping the old memory, then runs a second pass with the final
-  memory. `BookOptions` switches the memory off, adds the lines and translations of the last
+  memory. A rerun on the same checkpoint translates pages whose translation failed again, with the
+  memory saved for that page. `BookOptions` switches the memory off, adds the lines and translations of the last
   `recent_pages` pages to the translation prompt, or skips the second pass.
   `scripts/translate_book.py` runs it on an OpenMantra book (`--first`, `--count`, `--seed` a
   previous volume JSON, `--seed_after` a page of it instead of its last, `--memory=False`,

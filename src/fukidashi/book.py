@@ -291,6 +291,37 @@ async def second_pass(
     return revised, usage
 
 
+def saved_position(state: dict[str, Any], index: int) -> int | None:
+    return next((i for i, s in enumerate(state["stats"]) if s["page"] == index), None)
+
+
+async def translate_failed_again(
+    page: BookPage,
+    state: dict[str, Any],
+    checkpoint: Path,
+    recent: list[BookPage],
+    model: str,
+    lang: str,
+    options: BookOptions,
+    log: Log,
+    backoff: float,
+) -> None:
+    position = saved_position(state, page["index"])
+    if position is None or not state["stats"][position]["translateFailed"]:
+        return
+    memory = Memory.model_validate(state["snapshots"][position])
+    translated = await first_pass(page, memory, recent, model, lang, options.effort, log, backoff)
+    if translated is None:
+        return
+    translations, usage = translated
+    add_usage(state["usage"], usage)
+    apply_first_pass(page, translations)
+    state["stats"][position]["translateFailed"] = False
+    state["boxes"][str(page["index"])] = page["boxes"]
+    save_checkpoint(checkpoint, state)
+    log(f"p{page['index']:>3} translated again")
+
+
 async def translate_book(
     pages: list[BookPage],
     checkpoint: Path,
@@ -310,6 +341,9 @@ async def translate_book(
         saved = state["boxes"].get(str(page["index"]))
         if saved is not None:
             page["boxes"] = saved
+            await translate_failed_again(
+                page, state, checkpoint, recent, model, lang, options, log, backoff
+            )
             continue
         if options.memory:
             memory, update = await read_page(

@@ -28,8 +28,13 @@ def book(pages: int = PAGES) -> list[BookPage]:
 
 
 class FakeModel:
-    def __init__(self, broken_pages: frozenset[int] = frozenset()) -> None:
+    def __init__(
+        self,
+        broken_pages: frozenset[int] = frozenset(),
+        broken_translations: frozenset[int] = frozenset(),
+    ) -> None:
         self.broken_pages = broken_pages
+        self.broken_translations = broken_translations
         self.memory_calls: list[int] = []
         self.translate_calls = 0
         self.prompts: list[str] = []
@@ -49,6 +54,9 @@ class FakeModel:
                 return '{"glossary": [', {"completion_tokens": 10}
             return json.dumps(self.patch(page, BOX_ID.findall(prompt))), {"completion_tokens": 50}
         self.translate_calls += 1
+        ids = BOX_ID.findall(prompt)
+        if any(i.startswith(f"p{n}b") for n in self.broken_translations for i in ids):
+            return '{"translations": [', {"completion_tokens": 10}
         translations = [{"id": i, "translation": f"line {i}"} for i in BOX_ID.findall(prompt)]
         return json.dumps({"translations": translations}), {"completion_tokens": 20}
 
@@ -70,8 +78,11 @@ class FakeModel:
 
 @pytest.fixture
 def model(monkeypatch: pytest.MonkeyPatch) -> Any:
-    def install(broken_pages: frozenset[int] = frozenset()) -> FakeModel:
-        fake = FakeModel(broken_pages)
+    def install(
+        broken_pages: frozenset[int] = frozenset(),
+        broken_translations: frozenset[int] = frozenset(),
+    ) -> FakeModel:
+        fake = FakeModel(broken_pages, broken_translations)
         monkeypatch.setattr(detect, "stream_completion", fake)
         return fake
 
@@ -186,3 +197,27 @@ async def test_memory_can_use_its_own_model_and_effort(model: Any, tmp_path: Pat
         ("cheap", "low", False),
         ("strong", "none", True),
     ]
+
+
+async def test_rerun_translates_a_failed_page_again_with_its_own_memory(
+    model: Any, tmp_path: Path
+) -> None:
+    checkpoint = tmp_path / "ck.json"
+    options = BookOptions(second_pass=False)
+    model(broken_translations=frozenset({2}))
+    first = await translate_book(
+        book(3), checkpoint, log=lambda line: None, backoff=0, options=options
+    )
+    assert [s["translateFailed"] for s in first["stats"]] == [False, True, False]
+    fake = model()
+    pages = book(3)
+    second = await translate_book(
+        pages, checkpoint, log=lambda line: None, backoff=0, options=options
+    )
+    assert fake.memory_calls == []
+    assert fake.translate_calls == 1
+    assert "Page 2" not in fake.prompts[0]
+    assert "- 語2_0 -> word 2.0" in fake.prompts[0]
+    assert "- 語3_0 ->" not in fake.prompts[0]
+    assert [s["translateFailed"] for s in second["stats"]] == [False, False, False]
+    assert pages[1]["boxes"][0]["translation"] == "line p2b1"
