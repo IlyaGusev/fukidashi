@@ -19,15 +19,15 @@ had learned.
 A story memory the model updates after every page: characters, a glossary of
 names, and open plot threads. Instead of rewriting the memory, the model sends
 only a patch of what changed, and code merges the patch by key — so nothing is
-silently lost between pages. The merged memory is fed back as context for the
-next page's translation.
+silently lost between pages. Each page is first read into the memory; the merged
+result is what page N is translated with, and it carries to page N+1.
 
 ```mermaid
 flowchart LR
-    A[Page N image] --> B[Translate with<br/>current memory]
-    B --> C[Memory update:<br/>patch of what changed]
-    C --> D[Merge patch by key<br/>characters, glossary, plot]
-    D --> E[Memory for page N+1]
+    A[Page N image] --> B[Memory update:<br/>patch of what changed]
+    B --> C[Merge patch by key<br/>characters, glossary, plot]
+    C --> D[Translate page N<br/>with the memory]
+    D --> E[Memory carries<br/>to page N+1]
     E --> B
 ```
 
@@ -91,6 +91,9 @@ the professional translation.
 - **Cheap-model memory.** GLM-5.3-Flash maintaining the memory for Kimi-K3
   scored 33.8 — below Kimi-K3 with its own memory (35.7). The memory writer
   needs to be the strong model.
+- **Kimi-K2.6 as the whole pipeline.** A third of Kimi-K3's price: 31.9 with
+  memory, 33.6 without. Its long, noisy memory hurt it. Only memory written by
+  Kimi-K3 helped.
 - **Previous page's lines.** Feeding the model the last page's text instead of a
   memory scored 34.2, with worse name fidelity on two of three books (78% /
   85% / 74%). Recency is not memory.
@@ -105,21 +108,22 @@ reference gives us ground truth.
 
 Per 36–40 page book (Kimi-K3):
 
-- With memory: about **$1.0** after the glossary fix (down from $1.5–2.4 when
-  the model rewrote the whole memory each page).
+- With memory: about **$1.0** after the glossary fix (down from $1.5–2.4 before
+  the glossary stopped collecting everyday words — it now holds 8–14 names per
+  book instead of 111–205).
 - Without memory: about **$0.3**.
 - GLM-5.3-Flash end to end: about **$0.05**.
 
-Memory roughly triples token cost over no-memory, but the memory itself shrinks
-once patching replaced full rewrites.
+Memory roughly triples token cost over no-memory.
 
 ## Next steps
 
-1. **Story memory inside the app** — expose the memory (characters, glossary,
-   plot threads) in the UI so users can inspect and edit what the model knows.
+1. **Done: the app's volume translation now uses the story memory** and shows
+   the notes and each line's speaker (PR #18).
 2. **Chapter carry-over in the UI** — surface the seeded-memory flow
    (chapter 1 → chapter 2) as a first-class action, since it is the single
    biggest quality lever we measured.
+3. **Let users correct the notes (names, speakers) before translating on.**
 
 ## Code and data
 
