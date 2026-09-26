@@ -511,10 +511,16 @@ function renderThumbs() {
 }
 
 async function refreshNotes() {
-  const box = $("notes");
+  const box = $("notes"), key = notesKey;
   if (tab !== "volume" || !volume) return box.classList.add("hidden");
   const q = new URLSearchParams({ model: model.value, lang: lang.value });
-  const { memory } = await (await fetch(`/volumes/${encodeURIComponent(volume.name)}/memory?${q}`)).json();
+  let memory = null;
+  try {
+    ({ memory } = await (await fetch(`/volumes/${encodeURIComponent(volume.name)}/memory?${q}`)).json());
+  } catch (err) {
+    memory = null;
+  }
+  if (key !== notesKey) return;
   box.classList.toggle("hidden", !memory);
   if (!memory) return;
   const items = (rows, line) => `<ul>${rows.map(line).join("") || "<li>none yet</li>"}</ul>`;

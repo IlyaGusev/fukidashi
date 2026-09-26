@@ -247,3 +247,17 @@ async def test_volume_pages_can_run_in_order_beside_single_pages(make_queue: Mak
         "v3": "v",
         "single": None,
     }
+
+
+async def test_volume_pages_get_their_own_time_limit(make_queue: MakeQueue) -> None:
+    async def takes_a_while(page: str, attempt: int) -> None:
+        await asyncio.sleep(0.1)
+
+    queue = await make_queue(
+        FakeTranslate(takes_a_while), attempts=1, step_timeout=0.05, volume_step_timeout=1
+    )
+    volume = await wait_for(queue, queue.submit("volume", "v", ["v1"], OPTIONS)["id"])
+    page = await wait_for(queue, queue.submit("page", "p1", ["p1"], OPTIONS)["id"])
+    assert volume["state"] == "done"
+    assert page["state"] == "failed"
+    assert page["steps"][0]["error"] == "no answer within 0s"

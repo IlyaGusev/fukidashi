@@ -160,7 +160,12 @@ def page_number(volume: str, page: str) -> int:
 
 
 def has_story(memory: Memory) -> bool:
-    return bool(memory.summary or memory.characters or memory.glossary)
+    return bool(memory.summary or memory.characters or memory.glossary or memory.threads)
+
+
+def combined_usage(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
+    counts = {k: v for k, v in second.items() if isinstance(v, int)}
+    return {**first, **{k: int(first.get(k) or 0) + v for k, v in counts.items()}}
 
 
 async def translate_with_memory(
@@ -175,6 +180,7 @@ async def translate_with_memory(
     memory = memory_before(volume, page, model, lang)
     view = memory_view(memory) if has_story(memory) else None
     _, result = await detect_bytes(data, mime, **options, memory=view, on_progress=on_progress)
+    write_json(result_path(page), result)
     boxes = [{"id": f"b{i}", "text": b["text"]} for i, b in enumerate(result["bubbles"], start=1)]
     reading = BookPage(index=page_number(volume, page), image=data, mime=mime, boxes=boxes)
     effort = "low" if options["thinking"] else None
@@ -182,6 +188,8 @@ async def translate_with_memory(
     for bubble, box in zip(result["bubbles"], boxes, strict=True):
         bubble["speaker"] = box.get("speaker")
     result["memoryFailed"] = update is None
+    if update is not None:
+        result["usage"] = combined_usage(result.get("usage") or {}, update.usage)
     save_snapshot(volume, page, model, lang, memory)
     return result
 

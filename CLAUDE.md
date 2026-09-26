@@ -31,8 +31,8 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
 - `src/fukidashi/store.py`: page, result, volume and story-memory files under `data/`;
   `translate_page`. With `FUKIDASHI_VOLUME_MEMORY` (default true) a volume page is translated with
   the story memory saved after the nearest earlier page of that volume, then read into the memory
-  (speakers go onto its bubbles); a failed memory update keeps the translation and is marked
-  `memoryFailed`. Memory lives in `data/memory/<volume>__<model>__<lang>.json`, one snapshot per
+  (speakers go onto its bubbles). The translation is saved before the memory update, the update's
+  tokens are added to the page's usage, and a failed update is marked `memoryFailed`. Memory lives in `data/memory/<volume>__<model>__<lang>.json`, one snapshot per
   page. Single pages keep the previous page's text as context.
 - `src/fukidashi/jobs.py`: job queue on SQLite (`data/jobs.db`, tables `jobs` and `steps`).
   `FUKIDASHI_WORKERS` worker tasks (default 2) each claim the next queued step: single pages
@@ -40,7 +40,8 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
   3) with backoff on bad output, timeouts, connection, rate-limit and 5xx errors, and a hard
   `FUKIDASHI_STEP_TIMEOUT` per try (default 600s). A page gets the previous page's text as
   context only when that result is already on disk. With volume memory on, a volume's pages run one
-  at a time in order while other jobs use the other workers. Steps left running at startup go back to
+  at a time in order while other jobs use the other workers, and each volume page gets twice
+  `FUKIDASHI_STEP_TIMEOUT` because it makes two calls. Steps left running at startup go back to
   queued, so jobs resume after a restart. The UI polls `GET /jobs` (latest 30 jobs, with
   streaming progress on running steps) every second while anything is active.
   `POST /jobs/{id}/retry` resubmits the unfinished pages of a finished job.

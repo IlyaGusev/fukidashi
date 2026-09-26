@@ -64,6 +64,12 @@ def duplicate_message(job: dict[str, Any]) -> str:
     )
 
 
+def describe(e: BaseException, limit: float) -> str:
+    if isinstance(e, TimeoutError):
+        return f"no answer within {limit:.0f}s"
+    return f"{type(e).__name__}: {e}"
+
+
 class JobQueue:
     def __init__(
         self,
@@ -74,6 +80,7 @@ class JobQueue:
         step_timeout: float = 600,
         backoff: float = 2,
         volume_pages_in_order: bool = False,
+        volume_step_timeout: float | None = None,
     ) -> None:
         self._translate = translate
         self._in_order = volume_pages_in_order
@@ -81,6 +88,7 @@ class JobQueue:
         self._concurrency = concurrency
         self._attempts = attempts
         self._step_timeout = step_timeout
+        self._volume_step_timeout = volume_step_timeout or step_timeout
         self._backoff = backoff
         self._workers: list[asyncio.Task[None]] = []
         self._running: dict[StepKey, asyncio.Task[dict[str, Any] | None]] = {}
@@ -203,26 +211,22 @@ class JobQueue:
         options = job_options(job)
         previous_page = job["steps"][position - 1]["page"] if position else None
         volume = job["name"] if job["kind"] == "volume" else None
+        limit = self._volume_step_timeout if volume else self._step_timeout
         for attempt in range(1, self._attempts + 1):
             self._update_step(key, attempts=attempt)
             try:
-                async with asyncio.timeout(self._step_timeout):
+                async with asyncio.timeout(limit):
                     return await self._translate(
                         page, options, previous_page, self._progress_for(key), volume
                     )
             except RETRYABLE as e:
-                self._update_step(key, error=self._describe(e))
+                self._update_step(key, error=describe(e, limit))
                 if attempt < self._attempts:
                     await asyncio.sleep(self._backoff * 2 ** (attempt - 1))
             except Exception as e:  # noqa: BLE001
-                self._update_step(key, error=self._describe(e))
+                self._update_step(key, error=describe(e, limit))
                 return None
         return None
-
-    def _describe(self, e: BaseException) -> str:
-        if isinstance(e, TimeoutError):
-            return f"no answer within {self._step_timeout:.0f}s"
-        return f"{type(e).__name__}: {e}"
 
     def _progress_for(self, key: StepKey) -> Progress:
         def on_progress(phase: str, chars: int) -> None:

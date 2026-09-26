@@ -109,3 +109,45 @@ async def test_a_failed_memory_update_keeps_the_translation(
     memory = store.volume_memory("Vol", "m", "English")
     assert memory is not None
     assert "failed" in memory.changes[0]
+
+
+async def test_the_memory_update_adds_its_tokens_to_the_page(model: FakeModel) -> None:
+    [p1] = volume_of(1)
+    result = await store.translate_page(p1, OPTIONS, volume="Vol")
+    assert result["usage"]["completion_tokens"] == 20 + 30
+
+
+async def test_the_translation_is_saved_before_the_memory_update(
+    model: FakeModel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def detect_then_crash(
+        kwargs: dict[str, Any], on_progress: Any
+    ) -> tuple[str, dict[str, Any]]:
+        if DETECTION in kwargs["messages"][0]["content"][-1]["text"]:
+            return await model(kwargs, on_progress)
+        raise ValueError("unexpected")
+
+    monkeypatch.setattr(detect, "stream_completion", detect_then_crash)
+    [p1] = volume_of(1)
+    with pytest.raises(ValueError):
+        await store.translate_page(p1, OPTIONS, volume="Vol")
+    saved = store.load_result(p1)
+    assert saved is not None
+    assert saved["bubbles"][0]["translation"] == "Mel!"
+
+
+async def test_a_memory_with_only_threads_still_reaches_the_next_page(
+    model: FakeModel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def threads_only(kwargs: dict[str, Any], on_progress: Any) -> tuple[str, dict[str, Any]]:
+        prompt = kwargs["messages"][0]["content"][-1]["text"]
+        if DETECTION in prompt:
+            return await model(kwargs, on_progress)
+        thread = {"id": "t_wallet", "note": "the wallet was stolen on the train"}
+        return json.dumps({"threads": [thread]}), {}
+
+    monkeypatch.setattr(detect, "stream_completion", threads_only)
+    p1, p2 = volume_of(2)
+    await store.translate_page(p1, OPTIONS, volume="Vol")
+    await store.translate_page(p2, OPTIONS, p1, volume="Vol")
+    assert "the wallet was stolen on the train" in model.detections[1]

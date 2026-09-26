@@ -22,6 +22,7 @@ queue = JobQueue(
     attempts=settings.attempts,
     step_timeout=settings.step_timeout,
     volume_pages_in_order=settings.volume_memory,
+    volume_step_timeout=settings.step_timeout * (2 if settings.volume_memory else 1),
 )
 
 
