@@ -32,8 +32,11 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
   `translate_page`. With `FUKIDASHI_VOLUME_MEMORY` (default true) a volume page is translated with
   the story memory saved after the nearest earlier page of that volume, then read into the memory
   (speakers go onto its bubbles). The translation is saved before the memory update, the update's
-  tokens are added to the page's usage, and a failed update is marked `memoryFailed`. Memory lives in `data/memory/<volume>__<model>__<lang>.json`, one snapshot per
-  page. Single pages keep the previous page's text as context.
+  tokens are added to the page's usage, and a failed update is marked `memoryFailed`. Memory lives
+  in `data/memory/<volume>__<model>__<lang>.json`, one snapshot per page. A volume can continue
+  another (`continues` in its volume file, set with `POST /volumes/{name}/continues`); until it has
+  notes of its own, its pages start from the other volume's latest notes through `carry_over`.
+  Single pages keep the previous page's text as context.
 - `src/fukidashi/jobs.py`: job queue on SQLite (`data/jobs.db`, tables `jobs` and `steps`).
   `FUKIDASHI_WORKERS` worker tasks (default 2) each claim the next queued step: single pages
   first, then volume pages, oldest job first. Each step gets `FUKIDASHI_ATTEMPTS` tries (default
@@ -82,8 +85,9 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
   also on the first `--first` pages. Needs the `bench` extra.
 - `src/fukidashi/web.py`: FastAPI routes only.
 - `tests/test_jobs.py`: queue tests with a fake translator. Run `uv run pytest`.
-- `src/fukidashi/static/index.html`: the UI. The Volume tab shows the story notes
-  (`GET /volumes/{name}/memory`) and each box its speaker.
+- `src/fukidashi/static/index.html`: the UI. The Volume tab picks the volume a volume continues,
+  shows the story notes (`GET /volumes/{name}/memory`, or the carried-over notes before the first
+  page) and each box its speaker.
 - `scripts/serve.py`: runs the app on http://localhost:8083. `scripts/detect_bubbles.py`: CLI.
 - `scripts/benchmark.py`: scores Nebius vision models on OpenMantra annotations (box IoU
   P/R/F1, Japanese CER, chrF vs the English reference, latency, tokens), with thinking off and
