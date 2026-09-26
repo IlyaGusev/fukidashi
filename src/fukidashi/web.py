@@ -21,6 +21,7 @@ queue = JobQueue(
     concurrency=settings.workers,
     attempts=settings.attempts,
     step_timeout=settings.step_timeout,
+    volume_pages_in_order=settings.volume_memory,
 )
 
 
@@ -126,6 +127,15 @@ async def create_volume(name: str = Form(...)) -> dict[str, Any]:
 @app.get("/volumes/{name}")
 async def volume(name: str) -> dict[str, Any]:
     return load_volume(name)
+
+
+@app.get("/volumes/{name}/memory")
+async def volume_memory(
+    name: str, model: str = settings.model, lang: str = settings.lang
+) -> dict[str, Any]:
+    vol = load_volume(name)
+    memory = store.volume_memory(vol["name"], model, lang)
+    return {"memory": memory.dump() if memory else None}
 
 
 @app.get("/samples")

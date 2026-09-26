@@ -135,6 +135,11 @@
   details { border-top: 1px solid var(--border); }
   summary { padding: 10px 16px; cursor: pointer; color: var(--muted); font-size: 12px; user-select: none; }
   pre { margin: 0; padding: 12px 16px; max-height: 240px; overflow: auto; font: 11px/1.4 "JetBrains Mono", monospace; color: var(--muted); }
+  #notesbody { padding: 4px 16px 12px; max-height: 280px; overflow: auto; font-size: 12px; color: var(--muted); }
+  #notesbody h4 { margin: 10px 0 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+  #notesbody ul { margin: 0; padding: 0; list-style: none; }
+  #notesbody li { padding: 2px 0; }
+  #notesbody b { color: var(--text); font-weight: 500; }
   input[type=file] { display: none; }
   .hidden { display: none !important; }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; } aside { border-left: 0; border-top: 1px solid var(--border); } }
@@ -173,6 +178,7 @@
     <div id="status">Pick a page to start.</div>
     <div id="queue"></div>
     <ul id="list"><li id="empty">No boxes yet.</li></ul>
+    <details id="notes" class="hidden" open><summary>Story notes</summary><div id="notesbody"></div></details>
     <details><summary>Raw JSON</summary><pre id="raw"></pre></details>
   </aside>
 </main>
@@ -186,7 +192,7 @@ const drop = $("drop"), img = $("img"), stage = $("stage"), list = $("list"), ra
 const COLORS = { speech: "var(--speech)", thought: "var(--thought)", narration: "var(--narration)", sfx: "var(--sfx)" };
 const ACTIVE = ["queued", "running"];
 let tab = "page", current = null, result = null, volume = null, jobs = [], pollTimer = 0, notice = null, shownFinished = null;
-let stepIndex = new Map();
+let stepIndex = new Map(), notesKey = null;
 
 fetch("/models").then(r => r.json()).then(d => {
   for (const m of d.models) model.add(new Option(m, m, false, m === d.default));
@@ -249,7 +255,7 @@ function show(d) {
   result = d;
   list.innerHTML = d.bubbles.map((b, i) => `
     <li data-i="${i}" style="--c:${COLORS[b.kind] || COLORS.speech}" onmouseenter="activate(${i})">
-      <div class="meta"><span>${i + 1}</span><span class="kind">${b.kind}</span></div>
+      <div class="meta"><span>${i + 1}</span><span class="kind">${b.kind}</span>${b.speaker ? `<span>${esc(b.speaker)}</span>` : ""}</div>
       <div class="text">${esc(b.text)}</div>
       <div class="tr">${esc(b.translation)}</div>
     </li>`).join("");
@@ -504,8 +510,25 @@ function renderThumbs() {
   });
 }
 
+async function refreshNotes() {
+  const box = $("notes");
+  if (tab !== "volume" || !volume) return box.classList.add("hidden");
+  const q = new URLSearchParams({ model: model.value, lang: lang.value });
+  const { memory } = await (await fetch(`/volumes/${encodeURIComponent(volume.name)}/memory?${q}`)).json();
+  box.classList.toggle("hidden", !memory);
+  if (!memory) return;
+  const items = (rows, line) => `<ul>${rows.map(line).join("") || "<li>none yet</li>"}</ul>`;
+  $("notesbody").innerHTML =
+    `<h4>After page ${memory.afterPage}</h4><div>${esc(memory.summary)}</div>` +
+    `<h4>Characters</h4>` + items(memory.characters, c => `<li><b>${esc(c.name)}</b> ${esc(c.description)}</li>`) +
+    `<h4>Names</h4>` + items(memory.glossary, t => `<li>${esc(t.source)} → <b>${esc(t.target)}</b></li>`);
+}
+model.onchange = lang.onchange = () => { notesKey = null; renderAll(); };
+
 function renderVolume() {
   const job = volume && latest("volume", volume.name);
+  const key = volume ? `${tab}:${volume.name}:${job?.id}:${job ? count(job, "done") : 0}:${model.value}:${lang.value}` : null;
+  if (key !== notesKey) { notesKey = key; refreshNotes(); }
   $("voltranslate").disabled = !volume || !volume.pages.length;
   $("volcancel").classList.toggle("hidden", !(job && isActive(job)));
   const bar = $("progress");

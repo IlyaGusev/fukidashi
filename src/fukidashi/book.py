@@ -5,7 +5,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, NamedTuple, TypedDict
 
-from fukidashi.jobs import RETRYABLE
+from fukidashi.detect import RETRYABLE
 from fukidashi.memory import (
     Memory,
     MemoryUpdate,

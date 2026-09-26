@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     lang: str = "English"
     max_tokens: int = 65536
     memory_chars: int = 16000
+    volume_memory: bool = True
     stall_timeout: float = 60
     workers: int = 2
     attempts: int = 3

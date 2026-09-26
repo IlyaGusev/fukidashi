@@ -31,14 +31,21 @@ class FakeTranslate:
     def __init__(self, behaviour: Behaviour = ok) -> None:
         self.behaviour = behaviour
         self.calls: list[tuple[str, str | None]] = []
+        self.volumes: list[str | None] = []
         self.attempts: dict[str, int] = {}
         self.in_flight = 0
         self.max_in_flight = 0
 
     async def __call__(
-        self, page: str, options: dict[str, Any], previous: str | None, on_progress: Progress
+        self,
+        page: str,
+        options: dict[str, Any],
+        previous: str | None,
+        on_progress: Progress,
+        volume: str | None,
     ) -> dict[str, Any]:
         self.calls.append((page, previous))
+        self.volumes.append(volume)
         self.attempts[page] = self.attempts.get(page, 0) + 1
         self.in_flight += 1
         self.max_in_flight = max(self.max_in_flight, self.in_flight)
@@ -220,3 +227,23 @@ async def test_duplicate_submit_is_rejected_until_done(make_queue: MakeQueue) ->
     queue.submit("page", "p1", ["p1"], OPTIONS)
     await wait_for(queue, job["id"])
     queue.submit("page", "p1", ["p1"], {**OPTIONS, "thinking": True})
+
+
+async def test_volume_pages_can_run_in_order_beside_single_pages(make_queue: MakeQueue) -> None:
+    translate = FakeTranslate(slow)
+    queue = await make_queue(translate, concurrency=2, volume_pages_in_order=True)
+    volume = queue.submit("volume", "v", ["v1", "v2", "v3"], OPTIONS)["id"]
+    await asyncio.sleep(0.01)
+    assert states(queue.get(volume) or {}) == ["running", "queued", "queued"]
+    page = queue.submit("page", "single", ["single"], OPTIONS)["id"]
+    await wait_for(queue, page)
+    job = await wait_for(queue, volume)
+    assert states(job) == ["done", "done", "done"]
+    assert [p for p, _ in translate.calls if p != "single"] == ["v1", "v2", "v3"]
+    assert translate.max_in_flight == 2
+    assert dict(zip((p for p, _ in translate.calls), translate.volumes, strict=True)) == {
+        "v1": "v",
+        "v2": "v",
+        "v3": "v",
+        "single": None,
+    }
