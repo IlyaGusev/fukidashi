@@ -56,8 +56,9 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
   `recent_pages` pages to the translation prompt, or skips the second pass.
   `scripts/translate_book.py` runs it on an OpenMantra book (`--first`, `--count`, `--seed` a
   previous volume JSON, `--seed_after` a page of it instead of its last, `--memory=False`,
-  `--recent_pages N`, `--second_pass=False`, `--effort low` to let the model think a little) and
-  writes `out/books/<name>.json`.
+  `--recent_pages N`, `--second_pass=False`, `--effort low` to let the model think a little,
+  `--memory_model` and `--memory_effort` to read pages with a different model than the one that
+  translates) and writes `out/books/<name>.json`.
 - `scripts/audit_book.py`: for one volume JSON, lists glossary terms the translations do not
   always render as the glossary says, and the lines with the lowest sentence chrF. Writes
   `out/audit/<name>.md`. Needs the `bench` extra.

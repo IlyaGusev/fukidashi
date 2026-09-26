@@ -61,6 +61,8 @@ class BookOptions(NamedTuple):
     recent_pages: int = 0
     second_pass: bool = True
     effort: str | None = None
+    memory_model: str | None = None
+    memory_effort: str | None = None
 
 
 DEFAULT_OPTIONS = BookOptions()
@@ -311,7 +313,13 @@ async def translate_book(
             continue
         if options.memory:
             memory, update = await read_page(
-                page, memory, model, lang, options.effort, log, backoff
+                page,
+                memory,
+                options.memory_model or model,
+                lang,
+                options.memory_effort or options.effort,
+                log,
+                backoff,
             )
         else:
             memory, update = memory.model_copy(update={"after_page": page["index"]}), None

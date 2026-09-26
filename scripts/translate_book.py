@@ -84,6 +84,10 @@ def load_seed(path: str, after: int | None) -> Memory:
     return Memory.model_validate(snapshots[-1] if after is None else by_page[after])
 
 
+def model_slug(model: str) -> str:
+    return re.sub(r"[^\w.-]", "_", model.split("/")[-1])
+
+
 def run_suffix(seed: str | None, options: BookOptions) -> str:
     return (
         ("_seeded" if seed else "")
@@ -91,6 +95,8 @@ def run_suffix(seed: str | None, options: BookOptions) -> str:
         + (f"_recent{options.recent_pages}" if options.recent_pages else "")
         + ("" if options.second_pass else "_nopass2")
         + (f"_{options.effort}" if options.effort else "")
+        + (f"_notes-{model_slug(options.memory_model)}" if options.memory_model else "")
+        + (f"-{options.memory_effort}" if options.memory_effort else "")
     )
 
 
@@ -127,10 +133,13 @@ def main(
     recent_pages: int = 0,
     second_pass: bool = True,
     effort: str | None = None,
+    memory_model: str | None = None,
+    memory_effort: str | None = None,
 ) -> None:
-    options = BookOptions(memory, recent_pages, second_pass, effort)
-    model_slug = re.sub(r"[^\w.-]", "_", model.split("/")[-1])
-    name = name or f"{book}_{first}-{count or 'end'}_{model_slug}" + run_suffix(seed, options)
+    options = BookOptions(memory, recent_pages, second_pass, effort, memory_model, memory_effort)
+    name = name or f"{book}_{first}-{count or 'end'}_{model_slug(model)}" + run_suffix(
+        seed, options
+    )
     pages, meta = load_book(book, first, count)
     print(f"{book}: {len(pages)} pages from page {first + 1}, model {model}", flush=True)
     result = asyncio.run(
@@ -154,7 +163,11 @@ def main(
         "snapshots": result["snapshots"],
         "memoryStats": result["stats"],
         "summary": summary(result),
-        "models": {"detect": "OpenMantra boxes", "memory": model, "translate": model},
+        "models": {
+            "detect": "OpenMantra boxes",
+            "memory": memory_model or model,
+            "translate": model,
+        },
         "seededFrom": seed,
         "seededAfterPage": seed_after,
         "options": options._asdict(),

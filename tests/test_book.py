@@ -33,12 +33,14 @@ class FakeModel:
         self.memory_calls: list[int] = []
         self.translate_calls = 0
         self.prompts: list[str] = []
+        self.sent: list[dict[str, Any]] = []
 
     async def __call__(
         self, kwargs: dict[str, Any], on_progress: Any
     ) -> tuple[str, dict[str, Any]]:
         prompt = kwargs["messages"][0]["content"][-1]["text"]
         self.prompts.append(prompt)
+        self.sent.append(kwargs)
         page_match = PAGE_NUMBER.search(prompt)
         if page_match:
             page = int(page_match.group(1))
@@ -166,3 +168,21 @@ async def test_second_pass_can_be_skipped(model: Any, tmp_path: Path) -> None:
     )
     assert fake.translate_calls == 3
     assert result["revised"] == 0
+
+
+async def test_memory_can_use_its_own_model_and_effort(model: Any, tmp_path: Path) -> None:
+    fake = model()
+    options = BookOptions(second_pass=False, memory_model="cheap", memory_effort="low")
+    await translate_book(
+        book(2), tmp_path / "ck.json", "strong", log=lambda line: None, backoff=0, options=options
+    )
+    calls = [
+        (k["model"], k["reasoning_effort"], "Translate the text boxes" in p)
+        for k, p in zip(fake.sent, fake.prompts, strict=True)
+    ]
+    assert calls == [
+        ("cheap", "low", False),
+        ("strong", "none", True),
+        ("cheap", "low", False),
+        ("strong", "none", True),
+    ]
