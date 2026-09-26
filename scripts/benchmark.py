@@ -115,7 +115,7 @@ async def run_one(run: RunConfig, page: Page, lang: str, sem: asyncio.Semaphore)
             record = {"error": f"{type(e).__name__}: {e}"}
         record["seconds"] = time.monotonic() - start
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(record, ensure_ascii=False, indent=1))
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
     status = record.get("error") or f"{len(record['result']['bubbles'])} boxes"
     print(
         f"{model:32} {effort:7} {page['image']:36} {record['seconds']:6.1f}s  {status}", flush=True
@@ -187,7 +187,7 @@ def score_run(run: Run, pages: list[Page], by: str, threshold: float) -> dict[st
     hyp_pages: list[str] = []
     ref_pages: list[str] = []
     for page in pages:
-        record = json.loads(run_path(model, effort, page).read_text())
+        record = json.loads(run_path(model, effort, page).read_text(encoding="utf-8"))
         seconds.append(record["seconds"])
         gold = page["gold"]
         n_gold += len(gold)
@@ -287,7 +287,7 @@ def main(
         summary[by] = rows
         print(f"\nmatched by {by} (threshold {threshold}):")
         print_table(rows)
-    (OUT / "summary.json").write_text(json.dumps(summary, indent=1))
+    (OUT / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
 
 
 if __name__ == "__main__":

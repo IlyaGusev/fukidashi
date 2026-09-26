@@ -15,12 +15,14 @@ from fukidashi.jobs import ACTIVE, Duplicate, JobQueue, job_options
 from fukidashi.settings import settings
 
 STATIC = Path(__file__).parent / "static"
-INDEX = (STATIC / "index.html").read_text()
+INDEX = (STATIC / "index.html").read_text(encoding="utf-8")
 store.ensure_dirs()
 queue = JobQueue(
     concurrency=settings.workers,
     attempts=settings.attempts,
     step_timeout=settings.step_timeout,
+    volume_pages_in_order=settings.volume_memory,
+    volume_step_timeout=settings.step_timeout * (2 if settings.volume_memory else 1),
 )
 
 
@@ -125,6 +127,30 @@ async def create_volume(name: str = Form(...)) -> dict[str, Any]:
 
 @app.get("/volumes/{name}")
 async def volume(name: str) -> dict[str, Any]:
+    return load_volume(name)
+
+
+@app.get("/volumes/{name}/memory")
+async def volume_memory(
+    name: str, model: str = settings.model, lang: str = settings.lang
+) -> dict[str, Any]:
+    vol = load_volume(name)
+    own = store.volume_memory(vol["name"], model, lang)
+    carried = None if own else store.carried_memory(vol["name"], model, lang)
+    memory = own or carried
+    return {
+        "memory": memory.dump() if memory else None,
+        "carriedFrom": store.previous_volume(vol["name"]) if carried else None,
+    }
+
+
+@app.post("/volumes/{name}/continues")
+async def set_previous_volume(name: str, previous: str = Form("")) -> dict[str, Any]:
+    vol = load_volume(name)
+    earlier = load_volume(previous)["name"] if previous else None
+    if earlier == vol["name"]:
+        raise HTTPException(400, "a volume cannot continue itself")
+    store.set_previous_volume(vol["name"], earlier)
     return load_volume(name)
 
 

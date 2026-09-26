@@ -6,21 +6,12 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-import openai
-
-from fukidashi.detect import BadOutput, Progress
+from fukidashi.detect import RETRYABLE, Progress
 from fukidashi.settings import settings
 from fukidashi.store import translate_page
 
 ACTIVE = ("queued", "running")
 ACTIVE_SQL = "(" + ", ".join(f"'{s}'" for s in ACTIVE) + ")"
-RETRYABLE = (
-    BadOutput,
-    TimeoutError,
-    openai.APIConnectionError,
-    openai.RateLimitError,
-    openai.InternalServerError,
-)
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, model TEXT NOT NULL,
@@ -33,11 +24,14 @@ CREATE TABLE IF NOT EXISTS steps (
     PRIMARY KEY (job, position));
 CREATE INDEX IF NOT EXISTS steps_state ON steps(state);
 """
-CLAIM = """
-UPDATE steps SET state = 'running', started = ?, attempts = 0, error = NULL
+CLAIM = f"""
+UPDATE steps SET state = 'running', started = :now, attempts = 0, error = NULL
 WHERE (job, position) = (
     SELECT s.job, s.position FROM steps s JOIN jobs j ON j.id = s.job
-    WHERE s.state = 'queued' ORDER BY j.kind = 'volume', j.created, s.position LIMIT 1)
+    WHERE s.state = 'queued' AND NOT (:in_order AND j.kind = 'volume' AND EXISTS (
+        SELECT 1 FROM steps p WHERE p.job = s.job AND p.position < s.position
+        AND p.state IN {ACTIVE_SQL}))
+    ORDER BY j.kind = 'volume', j.created, s.position LIMIT 1)
 RETURNING job, position, page
 """
 FINISH_JOB = f"""
@@ -48,7 +42,9 @@ WHERE id = ? AND state = 'running'
   AND NOT EXISTS (SELECT 1 FROM steps WHERE job = jobs.id AND state IN {ACTIVE_SQL})
 """
 
-Translate = Callable[[str, dict[str, Any], str | None, Progress], Awaitable[dict[str, Any]]]
+Translate = Callable[
+    [str, dict[str, Any], str | None, Progress, str | None], Awaitable[dict[str, Any]]
+]
 StepKey = tuple[str, int]
 
 
@@ -68,6 +64,12 @@ def duplicate_message(job: dict[str, Any]) -> str:
     )
 
 
+def describe(e: BaseException, limit: float) -> str:
+    if isinstance(e, TimeoutError):
+        return f"no answer within {limit:.0f}s"
+    return f"{type(e).__name__}: {e}"
+
+
 class JobQueue:
     def __init__(
         self,
@@ -77,12 +79,16 @@ class JobQueue:
         attempts: int = 3,
         step_timeout: float = 600,
         backoff: float = 2,
+        volume_pages_in_order: bool = False,
+        volume_step_timeout: float | None = None,
     ) -> None:
         self._translate = translate
+        self._in_order = volume_pages_in_order
         self._db_path = db
         self._concurrency = concurrency
         self._attempts = attempts
         self._step_timeout = step_timeout
+        self._volume_step_timeout = volume_step_timeout or step_timeout
         self._backoff = backoff
         self._workers: list[asyncio.Task[None]] = []
         self._running: dict[StepKey, asyncio.Task[dict[str, Any] | None]] = {}
@@ -177,7 +183,7 @@ class JobQueue:
 
     def _claim(self) -> tuple[str, int, str] | None:
         now = time.time()
-        row = self._db.execute(CLAIM, (now,)).fetchone()
+        row = self._db.execute(CLAIM, {"now": now, "in_order": self._in_order}).fetchone()
         if not row:
             return None
         self._db.execute(
@@ -204,26 +210,23 @@ class JobQueue:
         assert job is not None
         options = job_options(job)
         previous_page = job["steps"][position - 1]["page"] if position else None
+        volume = job["name"] if job["kind"] == "volume" else None
+        limit = self._volume_step_timeout if volume else self._step_timeout
         for attempt in range(1, self._attempts + 1):
             self._update_step(key, attempts=attempt)
             try:
-                async with asyncio.timeout(self._step_timeout):
+                async with asyncio.timeout(limit):
                     return await self._translate(
-                        page, options, previous_page, self._progress_for(key)
+                        page, options, previous_page, self._progress_for(key), volume
                     )
             except RETRYABLE as e:
-                self._update_step(key, error=self._describe(e))
+                self._update_step(key, error=describe(e, limit))
                 if attempt < self._attempts:
                     await asyncio.sleep(self._backoff * 2 ** (attempt - 1))
             except Exception as e:  # noqa: BLE001
-                self._update_step(key, error=self._describe(e))
+                self._update_step(key, error=describe(e, limit))
                 return None
         return None
-
-    def _describe(self, e: BaseException) -> str:
-        if isinstance(e, TimeoutError):
-            return f"no answer within {self._step_timeout:.0f}s"
-        return f"{type(e).__name__}: {e}"
 
     def _progress_for(self, key: StepKey) -> Progress:
         def on_progress(phase: str, chars: int) -> None:

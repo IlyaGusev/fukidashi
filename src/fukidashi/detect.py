@@ -28,11 +28,26 @@ Text from the previous page, for consistent names, terms and tone:
 {lines}
 """
 
+MEMORY = """
+Story memory from the pages before this one. Keep its names, glossary renderings and character
+voices:
+{memory}
+"""
+
 Progress = Callable[[str, int], None]
 
 
 class BadOutput(ValueError):
     pass
+
+
+RETRYABLE = (
+    BadOutput,
+    TimeoutError,
+    openai.APIConnectionError,
+    openai.RateLimitError,
+    openai.InternalServerError,
+)
 
 
 def no_progress(phase: str, chars: int) -> None:
@@ -137,6 +152,14 @@ async def stream_with_optional(
                 del optional[k]
 
 
+def prompt_context(context: list[str] | None, memory: str | None) -> str:
+    if memory:
+        return MEMORY.format(memory=memory)
+    if context:
+        return CONTEXT.format(lines="\n".join(f"- {t}" for t in context))
+    return ""
+
+
 async def detect_bytes(
     data: bytes,
     mime: str,
@@ -147,11 +170,12 @@ async def detect_bytes(
     on_progress: Progress = no_progress,
     effort: str | None = None,
     max_tokens: int = settings.max_tokens,
+    memory: str | None = None,
 ) -> tuple[Image.Image, dict[str, Any]]:
     img = Image.open(BytesIO(data))
     w, h = img.size
     url = f"data:{mime};base64,{base64.b64encode(data).decode()}"
-    ctx = CONTEXT.format(lines="\n".join(f"- {t}" for t in context)) if context else ""
+    ctx = prompt_context(context, memory)
     content = [
         {"type": "image_url", "image_url": {"url": url}},
         {"type": "text", "text": PROMPT.format(w=w, h=h, lang=lang, context=ctx)},
