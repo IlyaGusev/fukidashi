@@ -151,3 +151,28 @@ async def test_a_memory_with_only_threads_still_reaches_the_next_page(
     await store.translate_page(p1, OPTIONS, volume="Vol")
     await store.translate_page(p2, OPTIONS, p1, volume="Vol")
     assert "the wallet was stolen on the train" in model.detections[1]
+
+
+async def test_a_volume_that_continues_another_starts_with_its_notes(model: FakeModel) -> None:
+    [p1] = volume_of(1)
+    await store.translate_page(p1, OPTIONS, volume="Vol")
+    first_of_next = store.save_page(png() + b"next", "n1.png", "image/png")
+    store.save_volume("Next", [first_of_next])
+    store.set_previous_volume("Next", "Vol")
+    await store.translate_page(first_of_next, OPTIONS, volume="Next")
+    assert "- 名1 -> Name1" in model.detections[1]
+    assert "carried over from the previous chapters" in model.memory_prompts[1]
+    memory = store.volume_memory("Next", "m", "English")
+    assert memory is not None
+    assert [t.target for t in memory.glossary] == ["Name1", "Name2"]
+
+
+def test_adding_pages_keeps_what_a_volume_continues(model: FakeModel) -> None:
+    pages = volume_of(1)
+    store.save_volume("Next", [])
+    store.set_previous_volume("Next", "Vol")
+    store.save_volume("Next", pages)
+    assert store.previous_volume("Next") == "Vol"
+    assert store.carried_memory("Next", "m", "English") is None
+    store.set_previous_volume("Next", None)
+    assert store.previous_volume("Next") is None

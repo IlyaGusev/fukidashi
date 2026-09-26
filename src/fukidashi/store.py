@@ -10,7 +10,7 @@ from PIL import Image
 
 from fukidashi.book import BookPage, read_page
 from fukidashi.detect import Progress, detect_bytes, no_progress
-from fukidashi.memory import Memory, memory_view
+from fukidashi.memory import Memory, carry_over, memory_view
 from fukidashi.render import render
 from fukidashi.settings import settings
 
@@ -105,8 +105,25 @@ def load_volume(name: str) -> dict[str, Any] | None:
     return vol
 
 
+def volume_record(name: str) -> dict[str, Any]:
+    path = volume_path(name)
+    if not path.is_file():
+        return {"name": name}
+    record: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return record
+
+
 def save_volume(name: str, pages: list[str]) -> None:
-    write_json(volume_path(name), {"name": name, "pages": pages})
+    write_json(volume_path(name), {**volume_record(name), "name": name, "pages": pages})
+
+
+def set_previous_volume(name: str, previous: str | None) -> None:
+    write_json(volume_path(name), {**volume_record(name), "continues": previous or None})
+
+
+def previous_volume(volume: str) -> str | None:
+    previous = volume_record(volume).get("continues")
+    return str(previous) if previous and previous != volume else None
 
 
 def list_volumes() -> list[str]:
@@ -144,14 +161,21 @@ def latest_snapshot(snapshots: dict[str, dict[str, Any]], pages: list[str]) -> M
     return None
 
 
+def volume_memory(volume: str, model: str, lang: str) -> Memory | None:
+    return latest_snapshot(load_snapshots(volume, model, lang), volume_pages(volume))
+
+
+def carried_memory(volume: str, model: str, lang: str) -> Memory | None:
+    previous = previous_volume(volume)
+    memory = volume_memory(previous, model, lang) if previous else None
+    return carry_over(memory) if memory else None
+
+
 def memory_before(volume: str, page: str, model: str, lang: str) -> Memory:
     pages = volume_pages(volume)
     earlier = pages[: pages.index(page)] if page in pages else []
-    return latest_snapshot(load_snapshots(volume, model, lang), earlier) or Memory()
-
-
-def volume_memory(volume: str, model: str, lang: str) -> Memory | None:
-    return latest_snapshot(load_snapshots(volume, model, lang), volume_pages(volume))
+    own = latest_snapshot(load_snapshots(volume, model, lang), earlier)
+    return own or carried_memory(volume, model, lang) or Memory()
 
 
 def page_number(volume: str, page: str) -> int:

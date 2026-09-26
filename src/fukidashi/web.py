@@ -135,8 +135,23 @@ async def volume_memory(
     name: str, model: str = settings.model, lang: str = settings.lang
 ) -> dict[str, Any]:
     vol = load_volume(name)
-    memory = store.volume_memory(vol["name"], model, lang)
-    return {"memory": memory.dump() if memory else None}
+    own = store.volume_memory(vol["name"], model, lang)
+    carried = None if own else store.carried_memory(vol["name"], model, lang)
+    memory = own or carried
+    return {
+        "memory": memory.dump() if memory else None,
+        "carriedFrom": store.previous_volume(vol["name"]) if carried else None,
+    }
+
+
+@app.post("/volumes/{name}/continues")
+async def set_previous_volume(name: str, previous: str = Form("")) -> dict[str, Any]:
+    vol = load_volume(name)
+    earlier = load_volume(previous)["name"] if previous else None
+    if earlier == vol["name"]:
+        raise HTTPException(400, "a volume cannot continue itself")
+    store.set_previous_volume(vol["name"], earlier)
+    return load_volume(name)
 
 
 @app.get("/samples")

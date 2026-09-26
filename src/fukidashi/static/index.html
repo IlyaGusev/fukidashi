@@ -164,6 +164,7 @@
       <div class="field"><label for="volname">Name</label><input type="text" id="volname" placeholder="My Manga vol. 1"></div>
       <button class="ghost" id="volcreate">Create</button>
       <button class="ghost" id="voladd" disabled>Add pages</button>
+      <div class="field"><label for="volprev">Continues</label><select id="volprev" disabled><option value="">— nothing —</option></select></div>
       <div id="progress"><i></i></div>
       <button id="voltranslate" disabled>Translate volume</button>
       <button id="volcancel" class="hidden">Cancel</button>
@@ -192,7 +193,7 @@ const drop = $("drop"), img = $("img"), stage = $("stage"), list = $("list"), ra
 const COLORS = { speech: "var(--speech)", thought: "var(--thought)", narration: "var(--narration)", sfx: "var(--sfx)" };
 const ACTIVE = ["queued", "running"];
 let tab = "page", current = null, result = null, volume = null, jobs = [], pollTimer = 0, notice = null, shownFinished = null;
-let stepIndex = new Map(), notesKey = null;
+let stepIndex = new Map(), notesKey = null, volumeNames = [];
 
 fetch("/models").then(r => r.json()).then(d => {
   for (const m of d.models) model.add(new Option(m, m, false, m === d.default));
@@ -353,6 +354,8 @@ async function refreshVolumes() {
   const s = $("volsel"), g = $("samples");
   s.querySelectorAll(":scope > option:not([value=''])").forEach(o => o.remove());
   for (const v of d.volumes) s.insertBefore(new Option(v, v, false, volume && v === volume.name), g);
+  volumeNames = d.volumes;
+  fillPrevious();
   if (!g.children.length) {
     const { samples } = await (await fetch("/samples")).json();
     for (const b of samples) g.appendChild(new Option(b, "sample:" + b));
@@ -408,8 +411,26 @@ async function loadVolume(name) {
   setVolume(await (await fetch(`/volumes/${encodeURIComponent(name)}`)).json());
 }
 
+function fillPrevious() {
+  const s = $("volprev");
+  s.querySelectorAll("option:not([value=''])").forEach(o => o.remove());
+  for (const n of volumeNames) if (!volume || n !== volume.name) s.appendChild(new Option(n, n));
+  s.value = volume?.continues || "";
+  s.disabled = !volume;
+}
+
+$("volprev").onchange = async () => {
+  if (!volume) return;
+  const url = `/volumes/${encodeURIComponent(volume.name)}/continues`;
+  const v = await (await fetch(url, { method: "POST", body: form({ previous: $("volprev").value }) })).json();
+  if (v.detail) return note(v.detail, { error: true });
+  notesKey = null;
+  setVolume(v);
+};
+
 function setVolume(v) {
   volume = v;
+  fillPrevious();
   $("voladd").disabled = !v;
   const s = $("volstrip");
   s.innerHTML = "";
@@ -514,9 +535,9 @@ async function refreshNotes() {
   const box = $("notes"), key = notesKey;
   if (tab !== "volume" || !volume) return box.classList.add("hidden");
   const q = new URLSearchParams({ model: model.value, lang: lang.value });
-  let memory = null;
+  let memory = null, carriedFrom = null;
   try {
-    ({ memory } = await (await fetch(`/volumes/${encodeURIComponent(volume.name)}/memory?${q}`)).json());
+    ({ memory, carriedFrom } = await (await fetch(`/volumes/${encodeURIComponent(volume.name)}/memory?${q}`)).json());
   } catch (err) {
     memory = null;
   }
@@ -525,7 +546,7 @@ async function refreshNotes() {
   if (!memory) return;
   const items = (rows, line) => `<ul>${rows.map(line).join("") || "<li>none yet</li>"}</ul>`;
   $("notesbody").innerHTML =
-    `<h4>After page ${memory.afterPage}</h4><div>${esc(memory.summary)}</div>` +
+    `<h4>${carriedFrom ? `Carried over from ${esc(carriedFrom)}` : `After page ${memory.afterPage}`}</h4><div>${esc(memory.summary)}</div>` +
     `<h4>Characters</h4>` + items(memory.characters, c => `<li><b>${esc(c.name)}</b> ${esc(c.description)}</li>`) +
     `<h4>Names</h4>` + items(memory.glossary, t => `<li>${esc(t.source)} → <b>${esc(t.target)}</b></li>`);
 }
