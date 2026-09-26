@@ -90,6 +90,7 @@ def run_suffix(seed: str | None, options: BookOptions) -> str:
         + ("" if options.memory else "_nomemory")
         + (f"_recent{options.recent_pages}" if options.recent_pages else "")
         + ("" if options.second_pass else "_nopass2")
+        + (f"_{options.effort}" if options.effort else "")
     )
 
 
@@ -125,8 +126,9 @@ def main(
     memory: bool = True,
     recent_pages: int = 0,
     second_pass: bool = True,
+    effort: str | None = None,
 ) -> None:
-    options = BookOptions(memory, recent_pages, second_pass)
+    options = BookOptions(memory, recent_pages, second_pass, effort)
     model_slug = re.sub(r"[^\w.-]", "_", model.split("/")[-1])
     name = name or f"{book}_{first}-{count or 'end'}_{model_slug}" + run_suffix(seed, options)
     pages, meta = load_book(book, first, count)

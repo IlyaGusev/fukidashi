@@ -413,17 +413,19 @@ async def complete_json(
     model: str,
     max_tokens: int = PATCH_MAX_TOKENS,
     on_progress: Progress = no_progress,
+    effort: str | None = None,
 ) -> tuple[Any, str, dict[str, Any]]:
+    thinking = effort is not None
     kwargs: dict[str, Any] = {
         "model": model,
         "temperature": 0.2,
         "max_tokens": max_tokens,
-        "extra_body": {"chat_template_kwargs": {"thinking": False, "enable_thinking": False}},
+        "extra_body": {"chat_template_kwargs": {"thinking": thinking, "enable_thinking": thinking}},
         "messages": [{"role": "user", "content": content}],
     }
     optional: dict[str, Any] = {
         "response_format": {"type": "json_object"},
-        "reasoning_effort": "none",
+        "reasoning_effort": effort or "none",
     }
     text, usage = await stream_with_optional(kwargs, optional, on_progress)
     try:
@@ -449,10 +451,11 @@ async def update_memory(
     boxes: list[dict[str, Any]],
     model: str = settings.model,
     lang: str = settings.lang,
+    effort: str | None = None,
 ) -> MemoryUpdate:
     prompt = patch_prompt(memory, page, boxes, lang)
     data, text, usage = await complete_json(
-        [image_part(image, mime), {"type": "text", "text": prompt}], model
+        [image_part(image, mime), {"type": "text", "text": prompt}], model, effort=effort
     )
     patch = parse_patch(data)
     return MemoryUpdate(apply_patch(memory, patch, page), patch.speakers, len(text), usage)

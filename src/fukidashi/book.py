@@ -60,6 +60,7 @@ class BookOptions(NamedTuple):
     memory: bool = True
     recent_pages: int = 0
     second_pass: bool = True
+    effort: str | None = None
 
 
 DEFAULT_OPTIONS = BookOptions()
@@ -117,6 +118,7 @@ async def translate_boxes(
     lang: str,
     second_pass: bool,
     recent: list[BookPage],
+    effort: str | None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     if not page["boxes"]:
         return {}, {}
@@ -130,7 +132,7 @@ async def translate_boxes(
         reason_rule=SECOND_PASS_RULE if second_pass else FIRST_PASS_RULE,
     )
     content = [image_part(page["image"], page["mime"]), {"type": "text", "text": prompt}]
-    data, _, usage = await complete_json(content, model)
+    data, _, usage = await complete_json(content, model, effort=effort)
     return {str(t["id"]): t for t in translation_items(data)}, usage
 
 
@@ -185,7 +187,13 @@ def starting_memory(state: dict[str, Any], seed: Memory | None) -> Memory:
 
 
 async def read_page(
-    page: BookPage, memory: Memory, model: str, lang: str, log: Log, backoff: float
+    page: BookPage,
+    memory: Memory,
+    model: str,
+    lang: str,
+    effort: str | None,
+    log: Log,
+    backoff: float,
 ) -> tuple[Memory, MemoryUpdate | None]:
     call = partial(
         update_memory,
@@ -196,6 +204,7 @@ async def read_page(
         page["boxes"],
         model,
         lang,
+        effort,
     )
     try:
         update = await with_retries(call, f"memory p{page['index']}", log, backoff)
@@ -214,10 +223,11 @@ async def first_pass(
     recent: list[BookPage],
     model: str,
     lang: str,
+    effort: str | None,
     log: Log,
     backoff: float,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]] | None:
-    call = partial(translate_boxes, page, memory, model, lang, False, recent)
+    call = partial(translate_boxes, page, memory, model, lang, False, recent, effort)
     try:
         return await with_retries(call, f"translate p{page['index']}", log, backoff)
     except RETRYABLE as e:
@@ -249,12 +259,18 @@ def apply_second_pass(page: BookPage, translations: dict[str, dict[str, Any]]) -
 
 
 async def second_pass(
-    pages: list[BookPage], memory: Memory, model: str, lang: str, log: Log, backoff: float
+    pages: list[BookPage],
+    memory: Memory,
+    model: str,
+    lang: str,
+    effort: str | None,
+    log: Log,
+    backoff: float,
 ) -> tuple[int, dict[str, int]]:
     usage: dict[str, int] = {}
 
     async def revise(page: BookPage) -> int:
-        call = partial(translate_boxes, page, memory, model, lang, True, [])
+        call = partial(translate_boxes, page, memory, model, lang, True, [], effort)
         try:
             translations, page_usage = await with_retries(
                 call, f"pass 2 p{page['index']}", log, backoff
@@ -294,14 +310,18 @@ async def translate_book(
             page["boxes"] = saved
             continue
         if options.memory:
-            memory, update = await read_page(page, memory, model, lang, log, backoff)
+            memory, update = await read_page(
+                page, memory, model, lang, options.effort, log, backoff
+            )
         else:
             memory, update = memory.model_copy(update={"after_page": page["index"]}), None
         memory_failed = options.memory and update is None
         stats = page_stats(memory, update, page, memory_failed)
         if update is not None:
             add_usage(state["usage"], update.usage)
-        translated = await first_pass(page, memory, recent, model, lang, log, backoff)
+        translated = await first_pass(
+            page, memory, recent, model, lang, options.effort, log, backoff
+        )
         stats["translateFailed"] = translated is None
         translations, usage = translated or ({}, {})
         if translated is not None:
@@ -321,7 +341,9 @@ async def translate_book(
     revised = 0
     pass2_usage: dict[str, int] = {}
     if options.second_pass:
-        revised, pass2_usage = await second_pass(pages, memory, model, lang, log, backoff)
+        revised, pass2_usage = await second_pass(
+            pages, memory, model, lang, options.effort, log, backoff
+        )
     usage = dict(state["usage"])
     for field, value in pass2_usage.items():
         usage[field] = usage.get(field, 0) + value

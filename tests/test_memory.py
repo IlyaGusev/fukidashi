@@ -230,3 +230,17 @@ async def test_answer_cut_off_at_max_tokens_says_so(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(detect, "stream_completion", fake)
     with pytest.raises(BadOutput, match="max_tokens"):
         await update_memory(Memory(), 1, b"img", "image/jpeg", [])
+
+
+async def test_effort_turns_thinking_on_at_that_level(monkeypatch: pytest.MonkeyPatch) -> None:
+    sent: list[dict[str, Any]] = []
+
+    async def fake(kwargs: dict[str, Any], on_progress: Any) -> tuple[str, dict[str, Any]]:
+        sent.append(kwargs)
+        return "{}", {}
+
+    monkeypatch.setattr(detect, "stream_completion", fake)
+    await update_memory(Memory(), 1, b"img", "image/jpeg", [], effort="low")
+    await update_memory(Memory(), 1, b"img", "image/jpeg", [])
+    assert [k["reasoning_effort"] for k in sent] == ["low", "none"]
+    assert [k["extra_body"]["chat_template_kwargs"]["thinking"] for k in sent] == [True, False]
