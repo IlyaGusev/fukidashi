@@ -141,7 +141,11 @@ def main(
         seed, options
     )
     pages, meta = load_book(book, first, count)
-    print(f"{book}: {len(pages)} pages from page {first + 1}, model {model}", flush=True)
+    print(
+        f"{book}: {len(pages)} pages from page {first + 1}, translation model {model}, "
+        f"notes model {memory_model or model if memory else 'none'}",
+        flush=True,
+    )
     result = asyncio.run(
         translate_book(
             pages,
