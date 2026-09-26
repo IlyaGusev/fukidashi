@@ -28,7 +28,8 @@ def fold_target(text: str) -> str:
 
 def renders(text: str, target: str) -> bool:
     folded = fold_target(target)
-    return bool(folded) and re.search(r"(?<!\w)" + re.escape(folded), fold_target(text)) is not None
+    word = r"(?<!\w)" + re.escape(folded) + r"(?:e?s)?(?!\w)"
+    return bool(folded) and re.search(word, fold_target(text)) is not None
 
 
 def mentions(bubble: Bubble, source: str) -> bool:

@@ -160,7 +160,9 @@ VIEW_LEVELS = (
     ViewLevel(False, False, 150, 120, 12),
     ViewLevel(False, False, 100, 60, 6),
     ViewLevel(False, False, 60, 0, 0),
+    ViewLevel(False, False, 0, 0, 0),
 )
+CUT_NOTE = "(the rest of the memory is cut to fit the prompt)"
 
 
 def valid_items[E: BaseModel](model: type[E], items: Any) -> list[E]:
@@ -378,13 +380,24 @@ def render_view(memory: Memory, level: ViewLevel, budget: int, page_text: str) -
     return "\n".join(story + glossary + rest)
 
 
+def cut_to_budget(view: str, budget: int) -> str:
+    kept: list[str] = []
+    used = len(CUT_NOTE)
+    for line in view.split("\n"):
+        if used + len(line) + 1 > budget:
+            break
+        kept.append(line)
+        used += len(line) + 1
+    return "\n".join([*kept, CUT_NOTE])
+
+
 def memory_view(memory: Memory, budget: int = settings.memory_chars, page_text: str = "") -> str:
     view = ""
     for level in VIEW_LEVELS:
         view = render_view(memory, level, budget, page_text)
         if len(view) <= budget:
             return view
-    return view
+    return cut_to_budget(view, budget)
 
 
 def box_text(boxes: list[dict[str, Any]]) -> str:

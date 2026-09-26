@@ -93,7 +93,7 @@ def run_suffix(seed: str | None, options: BookOptions) -> str:
         ("_seeded" if seed else "")
         + ("" if options.memory else "_nomemory")
         + (f"_recent{options.recent_pages}" if options.recent_pages else "")
-        + ("" if options.second_pass else "_nopass2")
+        + ("_pass2" if options.second_pass else "")
         + (f"_{options.effort}" if options.effort else "")
         + (f"_notes-{model_slug(options.memory_model)}" if options.memory_model else "")
         + (f"-{options.memory_effort}" if options.memory_effort else "")
@@ -131,7 +131,7 @@ def main(
     name: str | None = None,
     memory: bool = True,
     recent_pages: int = 0,
-    second_pass: bool = True,
+    second_pass: bool = False,
     effort: str | None = None,
     memory_model: str | None = None,
     memory_effort: str | None = None,
@@ -173,6 +173,8 @@ def main(
             "translate": model,
         },
         "seededFrom": seed,
+        "first": first,
+        "count": count,
         "seededAfterPage": seed_after,
         "options": options._asdict(),
     }

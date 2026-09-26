@@ -6,6 +6,7 @@ import pytest
 from fukidashi import detect
 from fukidashi.detect import BadOutput
 from fukidashi.memory import (
+    CUT_NOTE,
     DESCRIPTION_CHARS,
     MAX_CHANGES,
     Memory,
@@ -244,3 +245,23 @@ async def test_effort_turns_thinking_on_at_that_level(monkeypatch: pytest.Monkey
     await update_memory(Memory(), 1, b"img", "image/jpeg", [])
     assert [k["reasoning_effort"] for k in sent] == ["low", "none"]
     assert [k["extra_body"]["chat_template_kwargs"]["thinking"] for k in sent] == [True, False]
+
+
+def test_view_stays_within_budget_with_a_huge_cast_and_a_crowded_page() -> None:
+    cast = [
+        {
+            "id": f"c_{i}",
+            "name": f"Name {i}",
+            "description": "who they are now " * 8,
+            "voice": "talks like this " * 6,
+        }
+        for i in range(150)
+    ]
+    memory = patched(Memory(), 1, characters=cast)
+    assert len(memory_view(memory, BUDGET)) <= BUDGET
+    terms = [{"source": f"語{i:04d}", "target": f"word {i}"} for i in range(3000)]
+    crowded = patched(Memory(), 1, glossary=terms)
+    page = " ".join(f"語{i:04d}" for i in range(3000))
+    view = memory_view(crowded, BUDGET, page_text=page)
+    assert len(view) <= BUDGET
+    assert view.endswith(CUT_NOTE)

@@ -79,6 +79,8 @@ def test_renders_ignores_case_accents_and_suffixes() -> None:
     assert renders("Arifuji's sword", "arifuji")
     assert renders("the OKAMI returns", "Ōkami")
     assert not renders("Marifuji", "Arifuji")
+    assert not renders("Arifujiko came", "Arifuji")
+    assert renders("two demons", "demon")
     assert not renders("anything", "!!")
 
 

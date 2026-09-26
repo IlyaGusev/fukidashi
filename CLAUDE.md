@@ -54,18 +54,21 @@ Manga/comic translation. VLM calls go to Nebius Token Factory, token in `.env` a
   clipped on merge, and `memory_view` renders the memory for prompts within
   `FUKIDASHI_MEMORY_CHARS` (default 16000) by stepping down `VIEW_LEVELS`. Once the whole glossary
   no longer fits, the view shows the terms found in the current page's text, then the earliest
-  terms that fit. `carry_over` seeds the next chapter with the cast, glossary and open threads.
+  terms that fit; if even the last level is too long, whole lines are cut from the end so the view
+  never exceeds the budget. `carry_over` seeds the next chapter with the cast, glossary and open threads.
 - `src/fukidashi/book.py`: `translate_book` reads pages in order (memory update, then first-pass
   translation with that memory), checkpoints after every page, records a failed page in its stats
-  and snapshot instead of silently keeping the old memory, then runs a second pass with the final
-  memory. A rerun on the same checkpoint translates pages whose translation failed again, with the
+  and snapshot instead of silently keeping the old memory, and can run a second pass with the final
+  memory (`second_pass`, off by default: it revised 0 lines in every run). Checkpoints are written
+  atomically. A rerun on the same checkpoint translates pages whose translation failed again, with the
   memory saved for that page. `BookOptions` switches the memory off, adds the lines and translations of the last
   `recent_pages` pages to the translation prompt, or skips the second pass.
   `scripts/translate_book.py` runs it on an OpenMantra book (`--first`, `--count`, `--seed` a
   previous volume JSON, `--seed_after` a page of it instead of its last, `--memory=False`,
-  `--recent_pages N`, `--second_pass=False`, `--effort low` to let the model think a little,
+  `--recent_pages N`, `--second_pass=True`, `--effort low` to let the model think a little,
   `--memory_model` and `--memory_effort` to read pages with a different model than the one that
-  translates) and writes `out/books/<name>.json`.
+  translates) and writes `out/books/<name>.json`, which records `first` and `count`. Page numbers
+  in a run start at 1 from `--first`.
 - `scripts/audit_book.py`: for one volume JSON, lists glossary terms the translations do not
   always render as the glossary says, and the lines with the lowest sentence chrF. Writes
   `out/audit/<name>.md`. Needs the `bench` extra.

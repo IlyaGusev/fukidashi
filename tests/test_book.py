@@ -136,7 +136,7 @@ async def test_every_prompt_shows_the_pages_terms_from_a_large_seed(
     result = await translate_book(
         [page], tmp_path / "ck.json", seed=seed, log=lambda line: None, backoff=0
     )
-    assert len(fake.prompts) == 3
+    assert len(fake.prompts) == 2
     assert all("- 名1999 -> name 1999" in prompt for prompt in fake.prompts)
     assert result["stats"][0]["viewChars"] <= settings.memory_chars
 
@@ -153,7 +153,7 @@ async def test_without_memory_no_page_is_read_or_marked_failed(model: Any, tmp_p
     assert fake.memory_calls == []
     assert not any(s["memoryFailed"] for s in result["stats"])
     assert [s["glossary"] for s in result["stats"]] == [0, 0, 0]
-    assert fake.translate_calls == 6
+    assert fake.translate_calls == 3
 
 
 async def test_recent_pages_show_the_previous_lines_and_their_translations(
@@ -171,13 +171,15 @@ async def test_recent_pages_show_the_previous_lines_and_their_translations(
     assert "- p2b2 | Meru | 'せりふ2-2' | 'line p2b2'" in third
 
 
-async def test_second_pass_can_be_skipped(model: Any, tmp_path: Path) -> None:
+async def test_second_pass_runs_only_when_asked(model: Any, tmp_path: Path) -> None:
     fake = model()
-    options = BookOptions(second_pass=False)
-    result = await translate_book(
-        book(3), tmp_path / "ck.json", log=lambda line: None, backoff=0, options=options
-    )
+    await translate_book(book(3), tmp_path / "off.json", log=lambda line: None, backoff=0)
     assert fake.translate_calls == 3
+    options = BookOptions(second_pass=True)
+    result = await translate_book(
+        book(3), tmp_path / "on.json", log=lambda line: None, backoff=0, options=options
+    )
+    assert fake.translate_calls == 3 + 6
     assert result["revised"] == 0
 
 

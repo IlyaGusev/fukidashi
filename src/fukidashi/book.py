@@ -59,7 +59,7 @@ Log = Callable[[str], None]
 class BookOptions(NamedTuple):
     memory: bool = True
     recent_pages: int = 0
-    second_pass: bool = True
+    second_pass: bool = False
     effort: str | None = None
     memory_model: str | None = None
     memory_effort: str | None = None
@@ -179,7 +179,9 @@ def load_checkpoint(path: Path) -> dict[str, Any]:
 
 def save_checkpoint(path: Path, state: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    partial_write = path.with_suffix(path.suffix + ".tmp")
+    partial_write.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    partial_write.replace(path)
 
 
 def starting_memory(state: dict[str, Any], seed: Memory | None) -> Memory:
