@@ -15,7 +15,7 @@ from fukidashi.jobs import ACTIVE, Duplicate, JobQueue, job_options
 from fukidashi.settings import settings
 
 STATIC = Path(__file__).parent / "static"
-INDEX = (STATIC / "index.html").read_text()
+INDEX = (STATIC / "index.html").read_text(encoding="utf-8")
 store.ensure_dirs()
 queue = JobQueue(
     concurrency=settings.workers,

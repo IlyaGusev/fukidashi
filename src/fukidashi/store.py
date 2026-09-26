@@ -38,7 +38,9 @@ def write_atomic(path: Path, write: Callable[[Path], object]) -> None:
 
 
 def write_json(path: Path, data: Any) -> None:
-    write_atomic(path, lambda tmp: tmp.write_text(json.dumps(data, ensure_ascii=False)))
+    write_atomic(
+        path, lambda tmp: tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    )
 
 
 def save_page(data: bytes, filename: str | None, content_type: str | None) -> str:
@@ -62,7 +64,7 @@ def load_result(page: str) -> dict[str, Any] | None:
     path = result_path(page)
     if not path.is_file():
         return None
-    result: dict[str, Any] = json.loads(path.read_text())
+    result: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     return result
 
 
@@ -98,7 +100,7 @@ def load_volume(name: str) -> dict[str, Any] | None:
     path = volume_path(name)
     if not path.is_file():
         return None
-    vol: dict[str, Any] = json.loads(path.read_text())
+    vol: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     vol["pages"] = [page_info(p) for p in vol["pages"]]
     return vol
 
@@ -108,7 +110,7 @@ def save_volume(name: str, pages: list[str]) -> None:
 
 
 def list_volumes() -> list[str]:
-    return sorted(json.loads(p.read_text())["name"] for p in VOLUMES.glob("*.json"))
+    return sorted(json.loads(p.read_text(encoding="utf-8"))["name"] for p in VOLUMES.glob("*.json"))
 
 
 def volume_pages(volume: str) -> list[str]:
@@ -124,7 +126,7 @@ def load_snapshots(volume: str, model: str, lang: str) -> dict[str, dict[str, An
     path = memory_path(volume, model, lang)
     if not path.is_file():
         return {}
-    snapshots: dict[str, dict[str, Any]] = json.loads(path.read_text())["snapshots"]
+    snapshots: dict[str, dict[str, Any]] = json.loads(path.read_text(encoding="utf-8"))["snapshots"]
     return snapshots
 
 
